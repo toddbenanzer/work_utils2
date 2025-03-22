@@ -119,6 +119,7 @@ def create_date_column(
     start_date: Union[str, pd.Timestamp] = "2020-01-01",
     end_date: Union[str, pd.Timestamp] = "2023-12-31",
     nulls_pct: float = 0,
+    eow_eom: str = "day",
 ) -> Dict:
     """
     Create specification for a date column.
@@ -127,6 +128,7 @@ def create_date_column(
         start_date: Lower bound for date range
         end_date: Upper bound for date range
         nulls_pct: Percentage of null values (0-100)
+        eow_eom: 'day', 'week', or 'month' for day, end-of-week, or end-of-month
 
     Returns:
         Column specification dictionary
@@ -136,6 +138,7 @@ def create_date_column(
         "start_date": start_date,
         "end_date": end_date,
         "nulls_pct": nulls_pct,
+        "eow_eom": eow_eom,
     }
 
 

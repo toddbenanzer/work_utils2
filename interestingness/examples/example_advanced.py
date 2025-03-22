@@ -1,5 +1,5 @@
 """
-Advanced usage examples for the interestingness toolkit.
+Advanced usage examples for the interesting-ness toolkit.
 
 This script demonstrates the more sophisticated metrics
 available in the advanced module.
@@ -8,14 +8,14 @@ available in the advanced module.
 import os
 import sys
 
-# Add the parent directory to the path so we can import the interestingness package
+# Add the parent directory to the path so we can import the interesting-ness package
 # This is only needed for the example - when installed, the package would be available normally
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import the basic_usage module to get the sample data function
 from basic_usage import create_sample_data
 
-# Import advanced functions from the interestingness package
+# Import advanced functions from the interesting-ness package
 from interestingness.advanced import (
     anomaly_score,
     concentration_ratio,

@@ -1,0 +1,118 @@
+{
+    "id": {
+        "type": "unique_key",
+        "start": 1001,
+        "nulls_pct": 0
+    },
+    "name": {
+        "type": "text",
+        "min_length": 5,
+        "max_length": 30,
+        "nulls_pct": 20
+    },
+    "open_date": {
+        "type": "date",
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "nulls_pct": 0,
+        "eow_eom": "day"
+    },
+    "open_week": {
+        "type": "date",
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "nulls_pct": 0,
+        "eow_eom": "eow"
+    },
+    "open_month": {
+        "type": "date",
+        "start_date": "2024-01-01",
+        "end_date": "2024-12-31",
+        "nulls_pct": 0,
+        "eow_eom": "eom"
+    },
+    "customer_id": {
+        "type": "integer",
+        "distribution": "uniform",
+        "nulls_pct": 0,
+        "min": 1,
+        "max": 1000
+    },
+    "score": {
+        "type": "float",
+        "distribution": "normal",
+        "nulls_pct": 15,
+        "mean": 75,
+        "std": 10,
+        "min": 0,
+        "max": 100
+    },
+    "active": {
+        "type": "boolean",
+        "prob_true": 0.8,
+        "nulls_pct": 0
+    },
+    "value": {
+        "type": "float",
+        "distribution": "normal",
+        "nulls_pct": 0,
+        "mean": 100,
+        "std": 15,
+        "min": 0
+    },
+    "category": {
+        "type": "category",
+        "values": [
+            "Low",
+            "Medium",
+            "High"
+        ],
+        "nulls_pct": 0,
+        "probabilities": [
+            0.6,
+            0.3,
+            0.1
+        ]
+    },
+    "product_category": {
+        "type": "category",
+        "values": [
+            "Electronics",
+            "Clothing",
+            "Food",
+            "Books",
+            "Home"
+        ],
+        "nulls_pct": 0,
+        "probabilities": [
+            0.30,
+            0.25,
+            0.20,
+            0.15,
+            0.10
+        ]
+    },
+    "quantity": {
+        "type": "integer",
+        "distribution": "lognormal",
+        "nulls_pct": 0,
+        "mean": 1,
+        "sigma": 0.5,
+        "min": 1,
+        "max": 10
+    },
+    "price": {
+        "type": "float",
+        "distribution": "lognormal",
+        "nulls_pct": 0,
+        "mean": 3,
+        "sigma": 1,
+        "min": 10,
+        "max": 500
+    },
+    "is_discounted": {
+        "type": "boolean",
+        "prob_true": 0.3,
+        "nulls_pct": 0
+    }
+}

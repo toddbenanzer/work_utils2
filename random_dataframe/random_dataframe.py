@@ -36,24 +36,32 @@ def create_dataframe(
         np.random.seed(random_seed)
 
     result = {}
+    _default_null_pct = 0
+    _default_distribution = "uniform"
+    _default_id_start = 1
+    _default_boolean_probability = 0.5
+    _default_start_date = "2020-01-01"
+    _default_end_date = "2023-12-31"
+    _default_min_text_length = 5
+    _default_max_text_length = 30
 
     for col_name, col_spec in specs.items():
         col_type = col_spec["type"]
-        nulls_pct = col_spec.get("nulls_pct", 0)
+        nulls_pct = col_spec.get("nulls_pct", _default_null_pct)
 
         # Generate column data based on type
         if col_type == "unique_key":
-            start = col_spec.get("start", 1)
+            start = col_spec.get("start", _default_id_start)
             result[col_name] = np.arange(start, start + n_rows)
 
         elif col_type == "boolean":
-            prob_true = col_spec.get("prob_true", 0.5)
+            prob_true = col_spec.get("prob_true", _default_boolean_probability)
             result[col_name] = np.random.random(n_rows) < prob_true
 
         elif col_type == "integer":
             result[col_name] = _generate_numeric_column(
                 n_rows,
-                distribution=col_spec.get("distribution", "uniform"),
+                distribution=col_spec.get("distribution", _default_distribution),
                 params=col_spec,
                 as_int=True,
             )
@@ -61,14 +69,15 @@ def create_dataframe(
         elif col_type == "float":
             result[col_name] = _generate_numeric_column(
                 n_rows,
-                distribution=col_spec.get("distribution", "uniform"),
+                distribution=col_spec.get("distribution", _default_distribution),
                 params=col_spec,
                 as_int=False,
             )
 
         elif col_type == "date":
-            start_date = col_spec.get("start_date", "2020-01-01")
-            end_date = col_spec.get("end_date", "2023-12-31")
+            start_date = col_spec.get("start_date", _default_start_date)
+            end_date = col_spec.get("end_date", _default_end_date)
+            eow_eom = col_spec.get("eow_eom", "day")
 
             if isinstance(start_date, str):
                 start_date = pd.to_datetime(start_date)
@@ -80,14 +89,18 @@ def create_dataframe(
 
             # Generate random timestamps between start and end
             random_timestamps = np.random.uniform(start_ts, end_ts, n_rows)
-            result[col_name] = pd.to_datetime(random_timestamps, unit="s").strftime(
-                "%Y-%m-%d"
-            )
+            col_vals = pd.to_datetime(random_timestamps, unit="s")
+            if eow_eom == "eow":
+                col_vals = col_vals.map(next_friday)
+            elif eow_eom == "eom":
+                col_vals = col_vals.map(last_day_of_month)
+            else:
+                pass
+            result[col_name] = col_vals.strftime("%Y-%m-%d")
 
         elif col_type == "category":
             values = col_spec["values"]
             probabilities = col_spec.get("probabilities")
-
             if probabilities is None:
                 # Equal probability for each value
                 probabilities = [1 / len(values)] * len(values)
@@ -95,19 +108,21 @@ def create_dataframe(
             result[col_name] = np.random.choice(values, size=n_rows, p=probabilities)
 
         elif col_type == "text":
-            min_length = col_spec.get("min_length", 5)
-            max_length = col_spec.get("max_length", 30)
+            min_length = col_spec.get("min_length", _default_min_text_length)
+            max_length = col_spec.get("max_length", _default_max_text_length)
 
             # Generate random strings
-            result[col_name] = [
-                "".join(
-                    np.random.choice(
-                        list(string.ascii_letters + string.digits),
-                        np.random.randint(min_length, max_length + 1),
+            result[col_name] = np.array(
+                [
+                    "".join(
+                        np.random.choice(
+                            list(string.ascii_letters + string.digits),
+                            np.random.randint(min_length, max_length + 1),
+                        )
                     )
-                )
-                for _ in range(n_rows)
-            ]
+                    for _ in range(n_rows)
+                ]
+            )
 
         # Apply nulls if specified
         if nulls_pct > 0:
@@ -154,6 +169,9 @@ def _generate_numeric_column(
         sigma = params.get("sigma", 1)
         values = np.random.lognormal(mean, sigma, n_rows)
 
+    else:
+        raise ValueError(f"Invalid distribution: {distribution}")
+
     # Apply min/max limits if specified
     if "min" in params:
         values = np.maximum(values, params["min"])
@@ -164,3 +182,20 @@ def _generate_numeric_column(
         values = values.astype(int)
 
     return values
+
+
+def next_friday(dt):
+    # If it's already Friday (weekday=4), return the same date
+    # Otherwise, get the next Friday
+    if dt.weekday() == 4:  # Friday is weekday 4
+        return dt
+    else:
+        days_until_friday = (4 - dt.weekday()) % 7
+        return dt + pd.DateOffset(days=days_until_friday)
+
+
+def last_day_of_month(dt):
+    next_month = dt.replace(day=28) + pd.DateOffset(days=4)  # Goes to next month
+    return next_month - pd.DateOffset(
+        days=next_month.day
+    )  # Subtract the day to get last day of current month
