@@ -8,12 +8,12 @@ from typing import List, Optional, Union
 
 import pandas as pd
 
-from ..interestingness.anova import (
+from .anova import (
     calculate_anova_f_statistic,
     calculate_between_within_variance_ratio,
     calculate_eta_squared,
 )
-from ..interestingness.variance_measures import (
+from .variance_measures import (
     calculate_coefficient_variation,
     calculate_max_deviation,
     calculate_weighted_variance,
