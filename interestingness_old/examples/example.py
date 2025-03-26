@@ -16,17 +16,17 @@ import pandas as pd
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 # Import functions from the interestingness package
-from interestingness.contribution import (
+from interestingness_old.contribution import (
     feature_importance,
     mutual_information,
     variance_explained,
 )
-from interestingness.distribution import (
+from interestingness_old.distribution import (
     distribution_outliers,
     entropy_score,
     kl_divergence,
 )
-from interestingness.effect_size import (
+from interestingness_old.effect_size import (
     cohens_d,
     percent_difference,
     standardized_difference,

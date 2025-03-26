@@ -378,9 +378,6 @@ def create_date_weekday_filter(
     return date_col.dt.weekday == weekday
 
 
-# ===== Filter combination functions =====
-
-
 def combine_filters_and(df: pd.DataFrame, filters: List[Dict]) -> pd.Series:
     """
     Combine multiple filters with AND logic.
@@ -435,9 +432,6 @@ def negate_filter(df: pd.DataFrame, filter_spec: Dict) -> pd.Series:
         Negated boolean mask
     """
     return ~apply_filter(df, filter_spec)
-
-
-# ===== Main filter application function =====
 
 
 def apply_filter(df: pd.DataFrame, filter_spec: Dict) -> pd.Series:
@@ -542,9 +536,6 @@ def apply_filter(df: pd.DataFrame, filter_spec: Dict) -> pd.Series:
         return negate_filter(df, filter_spec["filter"])
     else:
         raise ValueError(f"Unknown filter type: {filter_type}")
-
-
-# ===== Convenience functions for working with filters =====
 
 
 def apply_filters(df: pd.DataFrame, filters: Dict) -> pd.DataFrame:

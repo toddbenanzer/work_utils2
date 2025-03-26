@@ -1,0 +1,51 @@
+{
+  "active_customers": {
+    "type": "equals",
+    "column": "active",
+    "value": true
+  },
+  "high_value_items": {
+    "type": "greater_than",
+    "column": "price",
+    "value": 100
+  },
+  "electronics_products": {
+    "type": "equals",
+    "column": "product_category",
+    "value": "Electronics"
+  },
+  "q1_orders": {
+    "type": "between",
+    "column": "open_date",
+    "min_value": "2024-01-01",
+    "max_value": "2024-03-31"
+  },
+  "discounted_items": {
+    "type": "equals",
+    "column": "is_discounted",
+    "value": true
+  },
+  "high_quantity": {
+    "type": "greater_than",
+    "column": "quantity",
+    "value": 3
+  },
+  "premium_products": {
+    "type": "and",
+    "filters": [
+      {
+        "type": "greater_than",
+        "column": "price",
+        "value": 100
+      },
+      {
+        "type": "in",
+        "column": "product_category",
+        "values": [
+          "Electronics",
+          "Home"
+        ]
+      }
+    ]
+  }
+}

@@ -16,7 +16,7 @@ sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from basic_usage import create_sample_data
 
 # Import advanced functions from the interesting-ness package
-from interestingness.advanced import (
+from interestingness_old.advanced import (
     anomaly_score,
     concentration_ratio,
     cramers_v,
