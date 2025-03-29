@@ -29,14 +29,18 @@
     "elements": {
         "title": {
             "font": {
+                "name": "Arial",
                 "size": 24,
-                "bold": true
+                "bold": true,
+                "italic": false
             },
             "alignment": "center"
         },
         "subtitle": {
             "font": {
+                "name": "Arial",
                 "size": 18,
+                "bold": true,
                 "italic": true
             },
             "alignment": "center"

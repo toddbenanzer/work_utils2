@@ -1,4 +1,5 @@
 from pptx import Presentation
+from pptx.util import Pt
 
 
 class PowerPointPresentation:
@@ -54,15 +55,25 @@ class PowerPointSlide:
         return self.presentation.slides.add_slide(slide_layout)
 
     def set_title(self, title, subtitle=None):
-        if subtitle:
-            title_placeholder = self.slide.shapes.title
-            title_placeholder.text = title
-            subtitle_placeholder = self.slide.placeholders[1]
-            subtitle_placeholder.text = subtitle
-        else:
-            title_placeholder = self.slide.shapes.title
-            title_placeholder.text = title
+        # set title
+        title_placeholder = self.slide.shapes.title
+        title_text_frame = title_placeholder.text_frame
+        title_p = title_text_frame.paragraphs[0]
+        title_p.text = title
+        title_p.font.name = self.config["elements"]["title"]["font"]["name"]
+        title_p.font.size = Pt(self.config["elements"]["title"]["font"]["size"])
+        title_p.font.bold = self.config["elements"]["title"]["font"]["bold"]
+        title_p.font.italic = self.config["elements"]["title"]["font"]["italic"]
 
-    def add_textbox(self, left, top, width, height, text):
-        textbox = self.slide.shapes.add_textbox(left, top, width, height)
-        textbox.text = text
+        # set subtitle
+        if subtitle is not None:
+            subtitle_run = title_p.add_run()
+            subtitle_run.text = "\n" + subtitle
+            subtitle_run.font.name = self.config["elements"]["subtitle"]["font"]["name"]
+            subtitle_run.font.size = Pt(
+                self.config["elements"]["subtitle"]["font"]["size"]
+            )
+            subtitle_run.font.bold = self.config["elements"]["subtitle"]["font"]["bold"]
+            subtitle_run.font.italic = self.config["elements"]["subtitle"]["font"][
+                "italic"
+            ]
