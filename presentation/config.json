@@ -1,0 +1,135 @@
+{
+    "defaults": {
+        "font": {
+            "name": "Arial",
+            "size": 10,
+            "color": "#000000",
+            "bold": false,
+            "italic": false
+        },
+        "alignment": "left",
+        "fill": null,
+        "border": {
+            "top": false,
+            "bottom": false,
+            "left": false,
+            "right": false,
+            "color": "#000000",
+            "width": 12700
+        },
+        "chart_colors": [
+            "#4472C4",
+            "#ED7D31",
+            "#A5A5A5",
+            "#FFC000",
+            "#5B9BD5",
+            "#70AD47"
+        ]
+    },
+    "elements": {
+        "title": {
+            "font": {
+                "size": 24,
+                "bold": true
+            },
+            "alignment": "center"
+        },
+        "subtitle": {
+            "font": {
+                "size": 18,
+                "italic": true
+            },
+            "alignment": "center"
+        },
+        "table_header": {
+            "font": {
+                "bold": true,
+                "color": "#FFFFFF",
+                "size": 11
+            },
+            "fill": "#4472C4",
+            "alignment": "center"
+        },
+        "segment_label": {
+            "font": {
+                "bold": true
+            }
+        },
+        "total_row": {
+            "font": {
+                "bold": true
+            },
+            "border": {
+                "top": true,
+                "width": 19050
+            }
+        },
+        "subtotal_row": {
+            "font": {
+                "bold": true,
+                "italic": true
+            }
+        }
+    },
+    "metrics": {
+        "Accounts": {
+            "display_name": "Number of Accounts",
+            "width": 1.5,
+            "format": "#,##0",
+            "alignment": "right"
+        },
+        "Balance": {
+            "display_name": "Average Balance",
+            "width": 1.5,
+            "format": "$#,##0.00",
+            "alignment": "right"
+        },
+        "Primacy": {
+            "display_name": "Primacy %",
+            "width": 1.2,
+            "format": "0.0%",
+            "alignment": "right"
+        },
+        "ResponseRate": {
+            "display_name": "Response Rate",
+            "width": 1.2,
+            "format": "0.00%",
+            "alignment": "right"
+        }
+    },
+    "charts": {
+        "title": {
+            "font": {
+                "size": 14,
+                "bold": true
+            }
+        },
+        "axis": {
+            "font": {
+                "size": 10
+            },
+            "major_gridlines": false,
+            "minor_gridlines": false,
+            "tick_labels": true
+        },
+        "value_axis": {
+            "number_format": "General"
+        },
+        "category_axis": {},
+        "legend": {
+            "font": {
+                "size": 10
+            },
+            "position": "bottom",
+            "include": true
+        },
+        "data_labels": {
+            "include": false,
+            "font": {
+                "size": 9
+            },
+            "format": "General",
+            "position": "outside_end"
+        }
+    }
+}
