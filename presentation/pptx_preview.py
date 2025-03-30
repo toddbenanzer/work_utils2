@@ -1,6 +1,8 @@
 """
 Utility for previewing PowerPoint presentations in Jupyter notebooks.
-Uses a simple approach to convert PowerPoint slides to images through PDF intermediary.
+Uses a two-step approach to convert PowerPoint slides to images:
+1. Convert PPTX to PDF using LibreOffice
+2. Convert PDF pages to images using pdftoppm
 """
 
 import glob
@@ -52,6 +54,11 @@ def preview_presentation(
             temp_files.append(pptx_path)
             presentation.save(pptx_path)
 
+        # Create a temporary PDF file
+        temp_fd, pdf_path = tempfile.mkstemp(suffix=".pdf")
+        os.close(temp_fd)
+        temp_files.append(pdf_path)
+
         # Create a temporary directory for images
         temp_img_dir = tempfile.mkdtemp()
         temp_dirs.append(temp_img_dir)
@@ -79,15 +86,14 @@ def preview_presentation(
                     "LibreOffice not found. Please ensure 'libreoffice' or 'soffice' is installed and in your PATH."
                 )
 
-        # Use LibreOffice to export each slide directly to PNG
-        # This is more reliable than the PDF conversion approach
+        # STEP 1: Convert PPTX to PDF using LibreOffice
         cmd = [
             libreoffice_cmd,
             "--headless",
             "--convert-to",
-            "png",
+            "pdf",
             "--outdir",
-            temp_img_dir,
+            os.path.dirname(pdf_path),
             pptx_path,
         ]
 
@@ -95,18 +101,67 @@ def preview_presentation(
 
         if process.returncode != 0:
             raise RuntimeError(
-                f"Failed to convert PPTX to PNG: {process.stderr.decode()}"
+                f"Failed to convert PPTX to PDF: {process.stderr.decode()}"
+            )
+
+        # LibreOffice generates the PDF file in the same directory with the same base name
+        actual_pdf_path = os.path.join(
+            os.path.dirname(pdf_path),
+            os.path.basename(pptx_path).replace(".pptx", ".pdf"),
+        )
+
+        # Rename to our intended path if different
+        if actual_pdf_path != pdf_path and os.path.exists(actual_pdf_path):
+            os.rename(actual_pdf_path, pdf_path)
+
+        # Check if the PDF exists
+        if not os.path.exists(pdf_path):
+            pdf_path = actual_pdf_path  # Use the original path if renaming didn't work
+            if not os.path.exists(pdf_path):
+                raise RuntimeError(
+                    f"PDF file not found at {pdf_path} or {actual_pdf_path}"
+                )
+
+        # STEP 2: Convert PDF to PNGs using pdftoppm (part of poppler-utils)
+        # Check if pdftoppm is available
+        try:
+            subprocess.run(
+                ["pdftoppm", "-v"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=True,
+            )
+        except (subprocess.SubprocessError, FileNotFoundError):
+            raise RuntimeError(
+                "pdftoppm not found. Please ensure 'poppler-utils' is installed. "
+                "On Ubuntu/Debian: sudo apt-get install poppler-utils"
+            )
+
+        # Use pdftoppm to convert PDF to PNGs
+        # pdftoppm -png -r <dpi> input.pdf output_prefix
+        output_prefix = os.path.join(temp_img_dir, "slide")
+        cmd = [
+            "pdftoppm",
+            "-png",  # Output format
+            "-r",
+            str(dpi),  # Resolution
+            pdf_path,  # Input PDF
+            output_prefix,  # Output prefix
+        ]
+
+        process = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+        if process.returncode != 0:
+            raise RuntimeError(
+                f"Failed to convert PDF to PNGs: {process.stderr.decode()}"
             )
 
         # Get a list of all generated image files
-        # LibreOffice will name them with the base filename followed by page number
-        base_filename = os.path.basename(pptx_path).replace(".pptx", "")
-        image_files = sorted(glob.glob(f"{temp_img_dir}/{base_filename}*.png"))
+        # pdftoppm names files as: <prefix>-<page_number>.png, e.g., slide-1.png, slide-2.png
+        image_files = sorted(glob.glob(f"{temp_img_dir}/slide-*.png"))
 
         if not image_files:
-            raise RuntimeError(
-                "No image files were generated. Check that the PowerPoint file has slides."
-            )
+            raise RuntimeError("No image files were generated. The PDF might be empty.")
 
         # Determine which slides to display based on slide_numbers parameter
         slide_indices = []
@@ -186,10 +241,10 @@ def preview_presentation(
 
 def check_dependencies():
     """
-    Check if LibreOffice is installed, which is the only dependency required for this simplified approach.
+    Check if all required dependencies are installed.
 
     Returns:
-        bool: True if LibreOffice is available, False otherwise
+        bool: True if all dependencies are available, False otherwise
     """
     missing = []
 
@@ -212,14 +267,25 @@ def check_dependencies():
         except (subprocess.SubprocessError, FileNotFoundError):
             missing.append("LibreOffice (libreoffice or soffice command)")
 
+    # Check for pdftoppm (part of poppler-utils)
+    try:
+        subprocess.run(
+            ["pdftoppm", "-v"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=True,
+        )
+    except (subprocess.SubprocessError, FileNotFoundError):
+        missing.append("pdftoppm (install poppler-utils package)")
+
     if missing:
         print("The following dependencies are missing:")
         for dep in missing:
             print(f"- {dep}")
         print("\nInstallation instructions:")
-        print("Ubuntu/Debian: sudo apt-get install libreoffice")
-        print("CentOS/RHEL: sudo yum install libreoffice")
-        print("Alpine: apk add libreoffice")
+        print("Ubuntu/Debian: sudo apt-get install libreoffice poppler-utils")
+        print("CentOS/RHEL: sudo yum install libreoffice poppler-utils")
+        print("Alpine: apk add libreoffice poppler-utils")
         return False
 
     return True

@@ -175,94 +175,167 @@ def _fill_data(table: Table, data: pd.DataFrame, params: TableParams) -> None:
 
 
 def create_table(
-    slide,  # Assuming PptxSlide type hint is available
+    slide,
     data: pd.DataFrame,
     left: Union[float, Inches],
     top: Union[float, Inches],
     width: Optional[Union[float, Inches]] = None,
     height: Optional[Union[float, Inches]] = None,
     style_settings: Optional[Dict[str, Any]] = None,
-) -> Optional[Table]:  # Return Optional[Table] to handle empty case gracefully
+) -> Optional[Table]:
     """
-    Create a table on a slide from DataFrame data (Refactored with Helpers).
+    Create a table on a slide from DataFrame data.
 
-    Handles single and multi-level indexes and columns.
+    Handles single and multi-level indexes and columns with proper formatting.
 
     Args:
-        slide: PowerPoint slide object to add the table to.
-        data: DataFrame containing the table data.
-        left: Left position of the table (can be float or Inches).
-        top: Top position of the table (can be float or Inches).
-        width: Optional width of the table. If None, uses default or calculates.
-        height: Optional height of the table. If None, attempts auto-height.
-        style_settings: Optional dictionary with style settings, including
-                        'width' (default width in inches) and 'column_widths'
-                        (list of widths in inches).
+        slide: PowerPoint slide object to add the table to
+        data: DataFrame containing the table data
+        left: Left position of the table
+        top: Top position of the table
+        width: Optional width of the table. If None, uses default or auto-calculates
+        height: Optional height of the table. If None, uses auto-height
+        style_settings: Optional dictionary with style settings
 
     Returns:
-        PowerPoint Table object added to the slide, or None if data is empty.
+        PowerPoint Table object or None if data is empty
     """
     if style_settings is None:
         style_settings = {}
 
-    # 1. Calculate Core Parameters
-    params = _calculate_table_parameters(data)
+    # Ensure we're working with a DataFrame
+    if not isinstance(data, pd.DataFrame):
+        try:
+            data = pd.DataFrame(data)
+        except Exception as e:
+            print(f"Error converting data to DataFrame: {e}")
+            return None
 
-    # Handle empty DataFrame case
-    if (
-        params.total_rows <= params.header_rows_needed
-        or params.total_cols <= params.index_col_count
-    ):
-        # Check if *only* headers exist or *only* index exists.
-        # A table with just headers or just an index column might still be valid depending on requirements.
-        # Let's refine the empty check: truly empty data rows *and* no columns beyond index?
-        is_effectively_empty = (
-            params.data_rows_needed <= 0 and params.data_col_count <= 0
-        )
+    # Handle empty DataFrame
+    if data.empty:
+        print("Warning: DataFrame is empty, no table created.")
+        return None
 
-        if is_effectively_empty:
-            print("Warning: DataFrame has no data content to display.")
-            # Optionally create a placeholder or return None
-            # shapes = slide.shapes
-            # placeholder_width, placeholder_height = _determine_table_dimensions(width, height, style_settings)
-            # if isinstance(left, (int, float)): left = Inches(left)
-            # if isinstance(top, (int, float)): top = Inches(top)
-            # table_shape = shapes.add_table(1, 1, left, top, placeholder_width, Inches(0.2))
-            # table_shape.table.cell(0,0).text = "[No Data]"
-            # return table_shape.table
-            return None  # Returning None might be cleaner
+    # Calculate number of rows and columns needed
+    is_multi_index = isinstance(data.index, pd.MultiIndex)
+    is_multi_column = isinstance(data.columns, pd.MultiIndex)
 
-    # 2. Determine Final Dimensions for the Shape
-    actual_width, actual_height = _determine_table_dimensions(
-        width, height, style_settings
-    )
+    # Determine index columns
+    index_col_count = len(data.index.names) if is_multi_index else 1
+    data_col_count = len(data.columns)
+    total_cols = index_col_count + data_col_count
 
-    # Ensure left/top are Inches
-    if isinstance(left, (int, float)):
-        left = Inches(left)
-    if isinstance(top, (int, float)):
-        top = Inches(top)
+    # Determine row counts
+    header_rows = data.columns.nlevels if is_multi_column else 1
+    data_rows = len(data)
+    total_rows = header_rows + data_rows
 
-    # 3. Create Table Shape
-    shapes = slide.shapes
+    # Ensure we have some data
+    if total_rows < 1 or total_cols < 1:
+        print("Warning: Data has no rows or columns.")
+        return None
+
+    # Determine table dimensions
+    if width is None:
+        # Default table width or auto-width (let PowerPoint decide)
+        default_width = style_settings.get("width", 8.0)
+        table_width = Inches(default_width)
+    else:
+        # Use specified width
+        table_width = width if isinstance(width, Inches) else Inches(width)
+
+    if height is None:
+        # Use a very small height to trigger PowerPoint's auto-height behavior
+        table_height = Inches(0.1)
+    else:
+        # Use specified height
+        table_height = height if isinstance(height, Inches) else Inches(height)
+
+    # Create the table shape
     try:
-        table_shape: GraphicFrame = shapes.add_table(
-            params.total_rows, params.total_cols, left, top, actual_width, actual_height
+        table_shape = slide.shapes.add_table(
+            total_rows, total_cols, left, top, table_width, table_height
         )
-        table: Table = table_shape.table
+        table = table_shape.table
     except Exception as e:
-        print(f"Error creating table shape: {e}")
-        print(f"Attempted rows: {params.total_rows}, cols: {params.total_cols}")
-        return None  # Cannot proceed if shape creation fails
+        print(f"Error creating table: {e}")
+        return None
 
-    # 4. Apply Column Widths
-    _apply_column_widths(table, params.total_cols, style_settings)
+    # Set column widths if provided
+    column_widths = style_settings.get("column_widths")
+    if column_widths and isinstance(column_widths, list):
+        for i, col_width in enumerate(column_widths):
+            if i < total_cols and col_width is not None:
+                try:
+                    width_val = (
+                        Inches(col_width)
+                        if isinstance(col_width, (int, float))
+                        else col_width
+                    )
+                    table.columns[i].width = width_val
+                except Exception as e:
+                    print(f"Warning: Could not set width for column {i}: {e}")
 
-    # 5. Fill Header Cells
-    _fill_headers(table, data, params)
+    # Fill header cells (column names)
+    if header_rows > 0:
+        # Fill index names in header row(s)
+        if is_multi_index:
+            for i, name in enumerate(data.index.names):
+                if name is not None:  # Skip None names (unnamed levels)
+                    cell = table.cell(0, i)
+                    cell.text = str(name)
+        elif data.index.name is not None:  # Single index with a name
+            cell = table.cell(0, 0)
+            cell.text = str(data.index.name)
 
-    # 6. Fill Data Cells
-    _fill_data(table, data, params)
+        # Fill column headers
+        col_offset = index_col_count
+        if is_multi_column:
+            # Handle multi-level columns
+            for col_idx, col_tuple in enumerate(data.columns):
+                for level, col_value in enumerate(col_tuple):
+                    if level < header_rows:
+                        cell = table.cell(level, col_idx + col_offset)
+                        cell.text = str(col_value)
+        else:
+            # Handle single-level columns
+            for col_idx, col_name in enumerate(data.columns):
+                cell = table.cell(0, col_idx + col_offset)
+                cell.text = str(col_name)
+
+    # Fill data cells
+    row_offset = header_rows
+    for idx, (row_idx, row_data) in enumerate(data.iterrows()):
+        # Fill index values
+        if is_multi_index:
+            # Handle multi-level index
+            for level, idx_value in enumerate(row_idx):
+                if level < index_col_count:
+                    cell = table.cell(idx + row_offset, level)
+                    cell.text = str(idx_value)
+        else:
+            # Handle single-level index
+            cell = table.cell(idx + row_offset, 0)
+            cell.text = str(row_idx)
+
+        # Fill data values
+        for col_idx, value in enumerate(row_data):
+            cell = table.cell(idx + row_offset, col_idx + index_col_count)
+            # Handle different data types
+            if pd.isna(value):
+                cell.text = ""
+            elif isinstance(value, (int, float)):
+                # Format numbers according to settings
+                format_str = style_settings.get(f"format_{col_idx}", None)
+                if format_str:
+                    cell.text = f"{value:{format_str}}"
+                else:
+                    cell.text = str(value)
+            else:
+                cell.text = str(value)
+
+    # Apply table styling
+    format_table(table, data, style_settings)
 
     return table
 
@@ -271,145 +344,184 @@ def format_table(
     table: Table, data: pd.DataFrame, style_settings: Optional[Dict[str, Any]] = None
 ) -> None:
     """
-    Format a PowerPoint table with styling.
+    Apply formatting to a PowerPoint table based on style settings.
 
     Args:
         table: PowerPoint Table object to format
-        data: DataFrame with the table data
-        style_settings: Table style settings from config
+        data: Original DataFrame (for structure information)
+        style_settings: Dictionary with style settings
     """
     if not style_settings:
         return
 
-    # Get styling options
-    has_header = style_settings.get("has_header", True)
-    first_row = style_settings.get("first_row", True)
-    banded_rows = style_settings.get("banded_rows", True)
-    banded_columns = style_settings.get("banded_columns", False)
+    # Get basic structure info
+    is_multi_index = isinstance(data.index, pd.MultiIndex)
+    is_multi_column = isinstance(data.columns, pd.MultiIndex)
+    index_col_count = len(data.index.names) if is_multi_index else 1
+    header_rows = data.columns.nlevels if is_multi_column else 1
 
-    # Get font settings
-    font_name = style_settings.get("font_name", "Calibri")
-    header_font_size = style_settings.get("header_font_size", 14)
-    header_font_bold = style_settings.get("header_font_bold", True)
-    body_font_size = style_settings.get("body_font_size", 12)
-    body_font_bold = style_settings.get("body_font_bold", False)
+    # Get style settings
+    header_style = style_settings.get("header", {})
+    default_style = style_settings.get("defaults", {})
 
-    # Get color settings
-    header_fill_color = style_settings.get("header_fill_color")
-    header_font_color = style_settings.get("header_font_color")
-    body_fill_color = style_settings.get("body_fill_color")
-    body_font_color = style_settings.get("body_font_color")
-    banded_fill_color = style_settings.get("banded_fill_color")
-
-    # If the table has a header row
-    if has_header and first_row:
-        # Format header row
-        for cell in table.rows[0].cells:
-            # Set font properties
-            for paragraph in cell.text_frame.paragraphs:
-                paragraph.alignment = PP_ALIGN.CENTER
-                for run in paragraph.runs:
-                    run.font.name = font_name
-                    run.font.size = Pt(header_font_size)
-                    run.font.bold = header_font_bold
-
-                    # Set font color if specified
-                    if header_font_color:
-                        rgb = hex_to_rgb(header_font_color)
-                        run.font.color.rgb = RGBColor(*rgb)
-
-            # Set cell background color if specified
-            if header_fill_color:
-                rgb = hex_to_rgb(header_fill_color)
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = RGBColor(*rgb)
-
-            # Vertical alignment
-            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
-
-    # Format the data rows
-    for row_idx, row in enumerate(table.rows[1:], start=1):
-        for cell_idx, cell in enumerate(row.cells):
-            # Set font properties
-            for paragraph in cell.text_frame.paragraphs:
-                paragraph.alignment = PP_ALIGN.CENTER
-                for run in paragraph.runs:
-                    run.font.name = font_name
-                    run.font.size = Pt(body_font_size)
-                    run.font.bold = body_font_bold
-
-                    # Set font color if specified
-                    if body_font_color:
-                        rgb = hex_to_rgb(body_font_color)
-                        run.font.color.rgb = RGBColor(*rgb)
-
-            # Set cell background color for banded rows
-            if banded_rows and row_idx % 2 == 0 and banded_fill_color:
-                rgb = hex_to_rgb(banded_fill_color)
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = RGBColor(*rgb)
-            elif body_fill_color:
-                rgb = hex_to_rgb(body_fill_color)
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = RGBColor(*rgb)
-
-            # Set cell background color for banded columns
-            if banded_columns and cell_idx % 2 == 0 and banded_fill_color:
-                rgb = hex_to_rgb(banded_fill_color)
-                cell.fill.solid()
-                cell.fill.fore_color.rgb = RGBColor(*rgb)
-
-            # Vertical alignment
-            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
-
-    # Set first column formatting if it's an index
-    for row in table.rows[1:]:  # Skip header row
-        cell = row.cells[0]
-        # Make index cells bold
-        for paragraph in cell.text_frame.paragraphs:
-            for run in paragraph.runs:
-                run.font.bold = True
-
-
-def format_hierarchical_table(
-    table: Table, data: pd.DataFrame, style_settings: Optional[Dict[str, Any]] = None
-) -> None:
-    """
-    Format a table with hierarchical index/columns.
-
-    Args:
-        table: PowerPoint Table object to format
-        data: DataFrame with hierarchical index/columns
-        style_settings: Table style settings from config
-    """
-    # Format the main table first
-    format_table(table, data, style_settings)
-
-    # Special formatting for hierarchical columns/indices
-    if isinstance(data.index, pd.MultiIndex) or isinstance(data.columns, pd.MultiIndex):
-        # Get the number of index levels
-        index_levels = (
-            len(data.index.names) if isinstance(data.index, pd.MultiIndex) else 1
-        )
-
-        # Format the index columns (left columns)
-        for row_idx in range(1, len(table.rows)):
-            for col_idx in range(index_levels):
+    # Format header rows
+    if header_rows > 0:
+        for row_idx in range(header_rows):
+            for col_idx in range(len(table.columns)):
                 cell = table.cell(row_idx, col_idx)
 
-                # Make index cells italic
-                for paragraph in cell.text_frame.paragraphs:
-                    for run in paragraph.runs:
-                        run.font.italic = True
+                # Apply header formatting
+                _apply_cell_format(cell, header_style)
 
-                # Set background color for index cells (lighter shade)
-                header_fill_color = (
-                    style_settings.get("header_fill_color") if style_settings else None
+    # Format index columns
+    for row_idx in range(header_rows, len(table.rows)):
+        for col_idx in range(index_col_count):
+            cell = table.cell(row_idx, col_idx)
+
+            # Make index cells slightly different
+            index_style = style_settings.get("index", header_style.copy())
+            if "fill" in index_style and isinstance(index_style["fill"], str):
+                # Use a lighter shade for index
+                rgb = hex_to_rgb(index_style["fill"])
+                lighter_rgb = tuple(min(int(c * 1.3), 255) for c in rgb)
+                index_style["fill"] = (
+                    f"#{lighter_rgb[0]:02x}{lighter_rgb[1]:02x}{lighter_rgb[2]:02x}"
                 )
-                if header_fill_color:
-                    # Use a lighter shade for index cells
-                    rgb = hex_to_rgb(header_fill_color)
-                    # Make it lighter by mixing with white
-                    lighter_rgb = tuple(int(0.7 * c + 0.3 * 255) for c in rgb)
-                    cell.fill.solid()
-                    cell.fill.fore_color.rgb = RGBColor(*lighter_rgb)
+
+            _apply_cell_format(cell, index_style)
+
+    # Format data cells
+    for row_idx in range(header_rows, len(table.rows)):
+        for col_idx in range(index_col_count, len(table.columns)):
+            cell = table.cell(row_idx, col_idx)
+
+            # Check for alternate row styling
+            if (
+                style_settings.get("banded_rows", False)
+                and (row_idx - header_rows) % 2 == 1
+            ):
+                alt_style = style_settings.get("alternate_row", default_style.copy())
+                _apply_cell_format(cell, alt_style)
+            else:
+                _apply_cell_format(cell, default_style)
+
+            # Apply specific column formatting if available
+            col_data_idx = col_idx - index_col_count
+            if col_data_idx < len(data.columns):
+                col_name = data.columns[col_data_idx]
+                col_style = style_settings.get(f"column_{col_data_idx}", {})
+                if col_style:
+                    _apply_cell_format(cell, col_style)
+
+
+def _apply_cell_format(cell: _Cell, style: Dict[str, Any]) -> None:
+    """
+    Apply formatting to a single cell based on style dictionary.
+
+    Args:
+        cell: PowerPoint Table Cell object
+        style: Dictionary with style settings
+    """
+    # Text frame formatting
+    text_frame = cell.text_frame
+
+    # Set vertical alignment
+    v_align = style.get("vertical_alignment")
+    if v_align:
+        if v_align.lower() == "top":
+            cell.vertical_anchor = MSO_ANCHOR.TOP
+        elif v_align.lower() == "middle":
+            cell.vertical_anchor = MSO_ANCHOR.MIDDLE
+        elif v_align.lower() == "bottom":
+            cell.vertical_anchor = MSO_ANCHOR.BOTTOM
+
+    # Process each paragraph in the cell
+    for paragraph in text_frame.paragraphs:
+        # Set alignment
+        alignment = style.get("alignment")
+        if alignment:
+            if alignment.lower() == "left":
+                paragraph.alignment = PP_ALIGN.LEFT
+            elif alignment.lower() == "center":
+                paragraph.alignment = PP_ALIGN.CENTER
+            elif alignment.lower() == "right":
+                paragraph.alignment = PP_ALIGN.RIGHT
+            elif alignment.lower() == "justify":
+                paragraph.alignment = PP_ALIGN.JUSTIFY
+
+        # Font formatting
+        font_settings = style.get("font", {})
+
+        # Apply font formatting to all text in paragraph
+        for run in paragraph.runs:
+            # Font name
+            if "name" in font_settings:
+                run.font.name = font_settings["name"]
+
+            # Font size
+            if "size" in font_settings:
+                size_pt = font_settings["size"]
+                run.font.size = Pt(size_pt)
+
+            # Bold
+            if "bold" in font_settings:
+                run.font.bold = font_settings["bold"]
+
+            # Italic
+            if "italic" in font_settings:
+                run.font.italic = font_settings["italic"]
+
+            # Font color
+            if "color" in font_settings:
+                color_str = font_settings["color"]
+                if color_str.startswith("#"):
+                    rgb = hex_to_rgb(color_str)
+                    run.font.color.rgb = RGBColor(*rgb)
+
+    # Cell fill (background color)
+    fill_color = style.get("fill")
+    if fill_color and isinstance(fill_color, str) and fill_color.startswith("#"):
+        rgb = hex_to_rgb(fill_color)
+        cell.fill.solid()
+        cell.fill.fore_color.rgb = RGBColor(*rgb)
+
+    # Cell borders
+    border_settings = style.get("border", {})
+    if border_settings:
+        # Top border
+        if border_settings.get("top", False):
+            cell.borders.top.width = border_settings.get(
+                "width", 12700
+            )  # default width
+
+            # Border color
+            if "color" in border_settings and border_settings["color"].startswith("#"):
+                rgb = hex_to_rgb(border_settings["color"])
+                cell.borders.top.color.rgb = RGBColor(*rgb)
+
+        # Bottom border
+        if border_settings.get("bottom", False):
+            cell.borders.bottom.width = border_settings.get("width", 12700)
+
+            # Border color
+            if "color" in border_settings and border_settings["color"].startswith("#"):
+                rgb = hex_to_rgb(border_settings["color"])
+                cell.borders.bottom.color.rgb = RGBColor(*rgb)
+
+        # Left border
+        if border_settings.get("left", False):
+            cell.borders.left.width = border_settings.get("width", 12700)
+
+            # Border color
+            if "color" in border_settings and border_settings["color"].startswith("#"):
+                rgb = hex_to_rgb(border_settings["color"])
+                cell.borders.left.color.rgb = RGBColor(*rgb)
+
+        # Right border
+        if border_settings.get("right", False):
+            cell.borders.right.width = border_settings.get("width", 12700)
+
+            # Border color
+            if "color" in border_settings and border_settings["color"].startswith("#"):
+                rgb = hex_to_rgb(border_settings["color"])
+                cell.borders.right.color.rgb = RGBColor(*rgb)

@@ -100,10 +100,49 @@ class PowerPointSlide:
         return textbox
 
     def add_table(self, data, left, top, width=None, height=None, style_settings=None):
-        if width is not None:
-            width = Inches(width)
-        if height is not None:
-            height = Inches(height)
-        create_table(
-            self.slide, data, Inches(left), Inches(top), width, height, style_settings
+        """
+        Add a table to the slide based on DataFrame data.
+
+        Args:
+            data: pandas DataFrame containing the table data
+            left: Left position of the table in inches
+            top: Top position of the table in inches
+            width: Width of the table in inches, or None for auto-width
+            height: Height of the table in inches, or None for auto-height
+            style_settings: Optional dictionary with table style settings.
+                            If None, uses settings from the presentation config file.
+
+        Returns:
+            The created table object
+        """
+        # Convert position to inches
+        left_inches = Inches(left)
+        top_inches = Inches(top)
+
+        # Handle width and height
+        width_inches = Inches(width) if width is not None else None
+        height_inches = Inches(height) if height is not None else None
+
+        # Prepare style settings
+        if style_settings is None:
+            # Get default table styling from config
+            style_settings = {}
+            if self.config and "elements" in self.config:
+                # Extract relevant table styling from config
+                if "table_header" in self.config["elements"]:
+                    style_settings["header"] = self.config["elements"]["table_header"]
+                if "defaults" in self.config:
+                    style_settings["defaults"] = self.config["defaults"]
+
+        # Call the table creator function
+        table = create_table(
+            self.slide,
+            data,
+            left_inches,
+            top_inches,
+            width_inches,
+            height_inches,
+            style_settings,
         )
+
+        return table
