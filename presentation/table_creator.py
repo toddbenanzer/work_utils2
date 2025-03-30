@@ -72,24 +72,22 @@ def _determine_table_dimensions(
     style_settings: Dict[str, Any],
 ) -> Tuple[Inches, Inches]:
     """Determines the final width and height for the table shape."""
-    actual_width = width
-    actual_height = height
+    if width is None:
+        # Default table width or auto-width (let PowerPoint decide)
+        default_width = style_settings.get("width", 8.0)
+        table_width = Inches(default_width)
+    else:
+        # Use specified width
+        table_width = width if isinstance(width, Inches) else Inches(width)
 
-    if actual_width is None:
-        default_width_inches = style_settings.get("width", 8.0)
-        actual_width = Inches(default_width_inches)
-        if actual_height is None:
-            actual_height = Inches(0.1)  # Auto-height trick
-    elif actual_height is None:
-        actual_height = Inches(0.1)  # Auto-height trick
+    if height is None:
+        # Use a very small height to trigger PowerPoint's auto-height behavior
+        table_height = Inches(0.1)
+    else:
+        # Use specified height
+        table_height = height if isinstance(height, Inches) else Inches(height)
 
-    # Ensure Inches type
-    if isinstance(actual_width, (int, float)):
-        actual_width = Inches(actual_width)
-    if isinstance(actual_height, (int, float)):
-        actual_height = Inches(actual_height)
-
-    return actual_width, actual_height
+    return table_width, table_height
 
 
 def _apply_column_widths(
@@ -112,15 +110,22 @@ def _apply_column_widths(
                     print(f"Warning: Could not set width for column {i}: {e}")
 
 
-def _fill_headers(table: Table, data: pd.DataFrame, params: TableParams) -> None:
+def _fill_headers(
+    table: Table,
+    data: pd.DataFrame,
+    params: TableParams,
+    style_settings: Dict[str, Any],
+) -> None:
     """Fills the header rows of the table with index and column names."""
     # Fill Index Names (Row 0)
     if params.is_multi_index:
         for i, name in enumerate(data.index.names):
             if name is not None and i < params.index_col_count:
-                table.cell(0, i).text = str(name)
+                display_name = _get_display_name(name, style_settings)
+                table.cell(0, i).text = str(display_name)
     elif data.index.name is not None:
-        table.cell(0, 0).text = str(data.index.name)
+        display_name = _get_display_name(data.index.name, style_settings)
+        table.cell(0, 0).text = str(display_name)
 
     # Fill Column Names
     for col_idx, col_value in enumerate(data.columns):
@@ -132,19 +137,29 @@ def _fill_headers(table: Table, data: pd.DataFrame, params: TableParams) -> None
             # col_value is a tuple (level0_val, level1_val, ...)
             for level, value in enumerate(col_value):
                 if level < params.header_rows_needed:
-                    table.cell(level, target_col).text = str(value)
+                    display_name = _get_display_name(value, style_settings)
+                    table.cell(level, target_col).text = str(display_name)
         else:
             # col_value is a single name, goes in the first header row
             if 0 < params.header_rows_needed:  # Ensure header row exists
-                table.cell(0, target_col).text = str(col_value)
+                display_name = _get_display_name(col_value, style_settings)
+                table.cell(0, target_col).text = str(display_name)
 
 
-def _fill_data(table: Table, data: pd.DataFrame, params: TableParams) -> None:
-    """Fills the data cells of the table."""
+def _fill_data(
+    table: Table,
+    data: pd.DataFrame,
+    params: TableParams,
+    style_settings: Dict[str, Any],
+) -> None:
+    """Fills the data cells of the table with properly formatted values."""
     first_data_row_index = params.header_rows_needed
 
     if params.data_rows_needed <= 0:
         return  # No data rows to fill
+
+    # Get number formats from style_settings
+    number_formats = style_settings.get("number_formats", {})
 
     for row_offset, (index_val, data_row) in enumerate(data.iterrows()):
         current_row_index = first_data_row_index + row_offset
@@ -164,14 +179,68 @@ def _fill_data(table: Table, data: pd.DataFrame, params: TableParams) -> None:
             table.cell(current_row_index, 0).text = str(index_val)
 
         # --- Fill data columns for the current data row ---
-        col_offset = 0
-        # Need to iterate through the *Series* `data_row` correctly
-        for value in data_row:  # Iterating directly over the Series gives values
-            current_col_index = params.index_col_count + col_offset
+        for col_idx, (col_name, value) in enumerate(data_row.items()):
+            current_col_index = params.index_col_count + col_idx
             if current_col_index < params.total_cols:
                 cell: _Cell = table.cell(current_row_index, current_col_index)
-                cell.text = str(value) if pd.notna(value) else ""
-            col_offset += 1
+
+                # Format the value if a format string is specified for this column
+                format_str = number_formats.get(str(col_name))
+                if format_str and pd.notna(value):
+                    cell.text = _format_value(value, format_str)
+                else:
+                    cell.text = str(value) if pd.notna(value) else ""
+
+
+def _get_display_name(col_name: str, style_settings: Dict[str, Any]) -> str:
+    """
+    Get the display name for a column based on style settings.
+
+    Args:
+        col_name: Original column name
+        style_settings: Style settings dictionary that may contain column_labels mapping
+
+    Returns:
+        Display name for the column
+    """
+    # Check for column_labels in style_settings
+    column_labels = style_settings.get("column_labels", {})
+
+    # Return the mapped display name if it exists, otherwise return the original name
+    return column_labels.get(str(col_name), col_name)
+
+
+def _format_value(value: Any, format_str: str) -> str:
+    """
+    Format a value according to a format string.
+
+    Args:
+        value: Value to format
+        format_str: Format string (e.g., '${:,.2f}', '{:.1%}', etc.)
+
+    Returns:
+        Formatted value as string
+    """
+    if pd.isna(value):
+        return ""
+
+    try:
+        # Handle currency format strings
+        if format_str.startswith("$"):
+            clean_format = format_str.lstrip("$")
+            if isinstance(value, (int, float)):
+                return f"${value:{clean_format}}"
+            else:
+                return str(value)
+        else:
+            if isinstance(value, (int, float)):
+                return f"{value:{format_str}}"
+            else:
+                return str(value)
+
+    except (ValueError, TypeError):
+        # Return original value as string if formatting fails
+        return str(value)
 
 
 def create_table(
@@ -216,131 +285,38 @@ def create_table(
         print("Warning: DataFrame is empty, no table created.")
         return None
 
-    # Calculate number of rows and columns needed
-    is_multi_index = isinstance(data.index, pd.MultiIndex)
-    is_multi_column = isinstance(data.columns, pd.MultiIndex)
-
-    # Determine index columns
-    index_col_count = len(data.index.names) if is_multi_index else 1
-    data_col_count = len(data.columns)
-    total_cols = index_col_count + data_col_count
-
-    # Determine row counts
-    header_rows = data.columns.nlevels if is_multi_column else 1
-    data_rows = len(data)
-    total_rows = header_rows + data_rows
+    # Get table parameters
+    params = _calculate_table_parameters(data)
 
     # Ensure we have some data
-    if total_rows < 1 or total_cols < 1:
+    if params.total_rows < 1 or params.total_cols < 1:
         print("Warning: Data has no rows or columns.")
         return None
 
     # Determine table dimensions
-    if width is None:
-        # Default table width or auto-width (let PowerPoint decide)
-        default_width = style_settings.get("width", 8.0)
-        table_width = Inches(default_width)
-    else:
-        # Use specified width
-        table_width = width if isinstance(width, Inches) else Inches(width)
-
-    if height is None:
-        # Use a very small height to trigger PowerPoint's auto-height behavior
-        table_height = Inches(0.1)
-    else:
-        # Use specified height
-        table_height = height if isinstance(height, Inches) else Inches(height)
+    table_width, table_height = _determine_table_dimensions(
+        width, height, style_settings
+    )
 
     # Create the table shape
     try:
         table_shape = slide.shapes.add_table(
-            total_rows, total_cols, left, top, table_width, table_height
+            params.total_rows, params.total_cols, left, top, table_width, table_height
         )
         table = table_shape.table
     except Exception as e:
         print(f"Error creating table: {e}")
         return None
 
-    # Set column widths if provided
-    column_widths = style_settings.get("column_widths")
-    if column_widths and isinstance(column_widths, list):
-        for i, col_width in enumerate(column_widths):
-            if i < total_cols and col_width is not None:
-                try:
-                    width_val = (
-                        Inches(col_width)
-                        if isinstance(col_width, (int, float))
-                        else col_width
-                    )
-                    table.columns[i].width = width_val
-                except Exception as e:
-                    print(f"Warning: Could not set width for column {i}: {e}")
-
-    # Fill header cells (column names)
-    if header_rows > 0:
-        # Fill index names in header row(s)
-        if is_multi_index:
-            for i, name in enumerate(data.index.names):
-                if name is not None:  # Skip None names (unnamed levels)
-                    cell = table.cell(0, i)
-                    cell.text = str(name)
-        elif data.index.name is not None:  # Single index with a name
-            cell = table.cell(0, 0)
-            cell.text = str(data.index.name)
-
-        # Fill column headers
-        col_offset = index_col_count
-        if is_multi_column:
-            # Handle multi-level columns
-            for col_idx, col_tuple in enumerate(data.columns):
-                for level, col_value in enumerate(col_tuple):
-                    if level < header_rows:
-                        cell = table.cell(level, col_idx + col_offset)
-                        cell.text = str(col_value)
-        else:
-            # Handle single-level columns
-            for col_idx, col_name in enumerate(data.columns):
-                cell = table.cell(0, col_idx + col_offset)
-                cell.text = str(col_name)
-
-    # Fill data cells
-    row_offset = header_rows
-    for idx, (row_idx, row_data) in enumerate(data.iterrows()):
-        # Fill index values
-        if is_multi_index:
-            # Handle multi-level index
-            for level, idx_value in enumerate(row_idx):
-                if level < index_col_count:
-                    cell = table.cell(idx + row_offset, level)
-                    cell.text = str(idx_value)
-        else:
-            # Handle single-level index
-            cell = table.cell(idx + row_offset, 0)
-            cell.text = str(row_idx)
-
-        # Fill data values
-        for col_idx, value in enumerate(row_data):
-            cell = table.cell(idx + row_offset, col_idx + index_col_count)
-            # Handle different data types
-            if pd.isna(value):
-                cell.text = ""
-            elif isinstance(value, (int, float)):
-                # Format numbers according to settings
-                format_str = style_settings.get(f"format_{col_idx}", None)
-                if format_str:
-                    cell.text = f"{value:{format_str}}"
-                else:
-                    cell.text = str(value)
-            else:
-                cell.text = str(value)
-
-    # Apply table styling
-    format_table(table, data, style_settings)
+    _apply_column_widths(table, params.total_cols, style_settings)
+    _fill_headers(table, data, params, style_settings)
+    _fill_data(table, data, params, style_settings)
+    _format_table(table, data, style_settings)
 
     return table
 
 
-def format_table(
+def _format_table(
     table: Table, data: pd.DataFrame, style_settings: Optional[Dict[str, Any]] = None
 ) -> None:
     """
@@ -409,7 +385,7 @@ def format_table(
             col_data_idx = col_idx - index_col_count
             if col_data_idx < len(data.columns):
                 col_name = data.columns[col_data_idx]
-                col_style = style_settings.get(f"column_{col_data_idx}", {})
+                col_style = style_settings.get(col_name, {})
                 if col_style:
                     _apply_cell_format(cell, col_style)
 
