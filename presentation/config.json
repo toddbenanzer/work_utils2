@@ -34,16 +34,16 @@
                 "bold": true,
                 "italic": false
             },
-            "alignment": "center"
+            "alignment": "left"
         },
         "subtitle": {
             "font": {
                 "name": "Arial",
-                "size": 18,
-                "bold": true,
+                "size": 16,
+                "bold": false,
                 "italic": true
             },
-            "alignment": "center"
+            "alignment": "left"
         },
         "table_header": {
             "font": {
