@@ -1,5 +1,7 @@
 from pptx import Presentation
-from pptx.util import Pt
+from pptx.util import Inches, Pt
+
+from .table_creator import create_table
 
 
 class PowerPointPresentation:
@@ -77,3 +79,31 @@ class PowerPointSlide:
             subtitle_run.font.italic = self.config["elements"]["subtitle"]["font"][
                 "italic"
             ]
+
+    def add_textbox(self, text, left, top, width, height):
+        left = Pt(left)
+        top = Pt(top)
+        width = Pt(width)
+        height = Pt(height)
+
+        textbox = self.slide.shapes.add_textbox(left, top, width, height)
+        text_frame = textbox.text_frame
+        text_frame.word_wrap = True
+
+        p = text_frame.add_paragraph()
+        p.text = text
+        p.font.name = self.config["elements"]["textbox"]["font"]["name"]
+        p.font.size = Pt(self.config["elements"]["textbox"]["font"]["size"])
+        p.font.bold = self.config["elements"]["textbox"]["font"]["bold"]
+        p.font.italic = self.config["elements"]["textbox"]["font"]["italic"]
+
+        return textbox
+
+    def add_table(self, data, left, top, width=None, height=None, style_settings=None):
+        if width is not None:
+            width = Inches(width)
+        if height is not None:
+            height = Inches(height)
+        create_table(
+            self.slide, data, Inches(left), Inches(top), width, height, style_settings
+        )
