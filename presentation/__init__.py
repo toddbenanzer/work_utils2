@@ -1,3 +1,3 @@
-from .tables import PowerPointPresentation, PowerPointSlide
+from .presentation import PowerPointPresentation
 
 __version__ = "0.1.0"

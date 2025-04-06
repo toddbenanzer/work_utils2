@@ -14,6 +14,8 @@ from pptx.enum.text import (  # MSO_ANCHOR is used for vertical alignment
     MSO_ANCHOR,
     PP_ALIGN,
 )
+from pptx.oxml.ns import qn
+from pptx.oxml.xmlchemy import OxmlElement
 from pptx.slide import Slide
 from pptx.table import Table, _Cell
 from pptx.text.text import TextFrame
@@ -22,7 +24,7 @@ from pptx.util import Inches, Pt
 # --- Logging Setup ---
 # Consider making logger configurable if this were a larger library
 logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s"
+    level=logging.ERROR, format="%(asctime)s - %(levelname)s - %(message)s"
 )
 logger = logging.getLogger(__name__)
 
@@ -92,7 +94,7 @@ def get_default_table_style() -> Dict[str, Any]:
                 "font_color": (255, 255, 255),
                 "h_align": "center",
                 "v_align": "middle",
-                "borders": {"bottom": {"width": 1.5, "color": (0, 0, 0)}},
+                "borders": {"bottom": {"width": 1.0, "color": (0, 0, 0)}},
             },
             "standard": {
                 "font_family": "Arial",
@@ -103,7 +105,7 @@ def get_default_table_style() -> Dict[str, Any]:
                 "font_color": (0, 0, 0),
                 "h_align": "left",
                 "v_align": "middle",
-                "borders": {"bottom": {"width": 0.75, "color": (192, 192, 192)}},
+                "borders": {"bottom": {"width": 1.0, "color": (0, 0, 0)}},
             },
             # ... other styles like subtotal, total, numeric_col etc. ...
             "subtotal": {
@@ -130,8 +132,8 @@ def get_default_table_style() -> Dict[str, Any]:
                 "h_align": "left",
                 "v_align": "middle",
                 "borders": {
-                    "top": {"width": 2.0, "color": (0, 0, 0)},
-                    "bottom": {"width": 2.0, "color": (0, 0, 0)},
+                    "top": {"width": 1.0, "color": (0, 0, 0)},
+                    "bottom": {"width": 1.0, "color": (0, 0, 0)},
                 },
             },
             "numeric_col": {"h_align": "right", "font_family": "Calibri"},
@@ -656,50 +658,146 @@ class PowerPointTableFormatter:
         # Applies borders based *only* on the final calculated style for this cell.
         self._apply_border_formatting(cell, cell_style.get("borders", {}))
 
+    # --- (Keep other methods as they are) ---
+
     def _apply_border_formatting(
         self, cell: _Cell, border_style: Dict[str, Dict[str, Any]]
     ):
-        """Applies border styles defined in border_style dict to a cell."""
-        # Again, skip spanned cells; borders are controlled by the master cell.
+        """
+        Applies border styles defined in border_style dict to a cell
+        using direct OXML manipulation based on common patterns.
+        """
+        # Skip spanned cells; borders controlled by the master cell.
         if cell.is_spanned:
             return
 
-        def apply_side(cell_border, side_style: Dict[str, Any]):
-            """Helper to apply border properties if they exist in the style."""
-            line_props = {}
-            # Color must be RGB tuple
+        # --- Helper: Apply properties to an OXML line element (e.g., <a:lnT>) ---
+        def apply_line_properties(line_element, side_style: Dict[str, Any]):
+            """Sets properties on an OXML line element (e.g., a:lnT)."""
+
+            # --- Helper to remove existing fill/dash child elements ---
+            def clear_line_fill_and_dash(ln_el):
+                # List of potential child tags related to fill and dash style
+                tags_to_remove = [
+                    "a:noFill",
+                    "a:solidFill",
+                    "a:gradFill",
+                    "a:pattFill",  # Fill types
+                    "a:prstDash",
+                    "a:custDash",  # Dash types
+                ]
+                for tag in tags_to_remove:
+                    # Find the element using the qualified tag name
+                    child = ln_el.find(qn(tag))
+                    # If found, remove it from its parent (ln_el)
+                    if child is not None:
+                        ln_el.remove(child)
+
+            # --- End clear_line_fill_and_dash helper ---
+
+            if not side_style:
+                # If no style defined for this side, ensure no visible line
+                clear_line_fill_and_dash(line_element)  # Remove fill/dash elements
+                line_element.set("w", "0")  # Set width attribute to 0
+                if "cap" in line_element.attrib:  # Remove cap attribute if present
+                    del line_element.attrib["cap"]
+                return
+
+            # --- Width ---
+            width_pts = side_style.get("width", 0)  # Default to 0 if not specified
+            if not isinstance(width_pts, (int, float)):
+                width_pts = 0
+
+            if width_pts > 0:
+                line_element.set("w", str(Pt(width_pts).emu))  # Width attribute in EMU
+                line_element.set("cap", "sq")  # Line cap: 'sq' for square (solid look)
+            else:
+                # Width is 0 or invalid, ensure no visible line
+                clear_line_fill_and_dash(line_element)  # Remove fill/dash
+                line_element.set("w", "0")
+                if "cap" in line_element.attrib:  # Remove cap
+                    del line_element.attrib["cap"]
+                return  # No need to process color/dash if width is 0
+
+            # --- Clear existing fill/dash before applying potentially new ones ---
+            # (Only relevant if width > 0, which is guaranteed at this point)
+            clear_line_fill_and_dash(line_element)
+
+            # --- Color --- (Only apply if width > 0)
+            color_rgb = side_style.get("color")
             if (
-                "color" in side_style
-                and isinstance(side_style["color"], tuple)
-                and len(side_style["color"]) == 3
+                color_rgb is not None
+                and isinstance(color_rgb, tuple)
+                and len(color_rgb) == 3
             ):
-                line_props["color"] = RGBColor(*side_style["color"])
-            # Width must be numeric
-            if "width" in side_style and isinstance(side_style["width"], (int, float)):
-                line_props["width"] = Pt(side_style["width"])
-            # Dash style could be added here (e.g., 'dash_style': MSO_LINE_DASH_STYLE.DASH)
-            if "dash_style" in side_style:
-                line_props["dash_style"] = side_style[
-                    "dash_style"
-                ]  # Assumes correct MSO constant passed
+                # Ensure values are valid RGB 0-255 (optional check)
+                r, g, b = [max(0, min(255, c)) for c in color_rgb]
 
-            if line_props:
-                try:
-                    cell_border.update(line_props)
-                except Exception as e:
-                    logger.error(f"Error applying border properties {line_props}: {e}")
-            # else: Consider if we need to explicitly "clear" the border if side_style is empty?
-            # Setting width to 0 might work. E.g., cell_border.width = Pt(0)
+                # Create <a:solidFill><a:srgbClr val="RRGGBB"/></a:solidFill>
+                solidFill = OxmlElement("a:solidFill")
+                srgbClr = OxmlElement("a:srgbClr")
 
-        # Process each border side if defined in the style
-        if "top" in border_style:
-            apply_side(cell.border_top, border_style["top"])
-        if "right" in border_style:
-            apply_side(cell.border_right, border_style["right"])
-        if "bottom" in border_style:
-            apply_side(cell.border_bottom, border_style["bottom"])
-        if "left" in border_style:
-            apply_side(cell.border_left, border_style["left"])
+                # --- CORRECTED LINE BELOW ---
+                # Format RGB tuple into "RRGGBB" hex string using f-string formatting
+                # {:02x} formats an integer as a 2-digit hex number with a leading zero if needed
+                hex_color_string = f"{r:02x}{g:02x}{b:02x}"
+                srgbClr.set("val", hex_color_string.upper())  # Conventionally uppercase
+                # --- END CORRECTION ---
+
+                solidFill.append(srgbClr)
+                line_element.append(solidFill)
+            # If color is None or invalid, the clear_line_fill_and_dash call handled removing old color
+
+            # --- Dash Style --- (Only apply if width > 0)
+            dash_style_val = side_style.get("dash_style")
+            # Note: clear_line_fill_and_dash already removed any existing dash element
+            if isinstance(dash_style_val, str) and dash_style_val:
+                # Add the new dash style
+                prstDash = OxmlElement("a:prstDash")
+                # Common values: 'solid', 'dash', 'lgDash', 'dot', 'sysDot', etc.
+                prstDash.set("val", dash_style_val)
+                line_element.append(prstDash)
+            # If dash_style_val is None or empty, the default (solid) is achieved by having no dash element
+
+        # --- End Helper ---
+
+        # --- Get or Add Generic OXML Element Helper ---
+        def get_or_add(parent_element, tag):
+            """Gets the child element with `tag` or creates, appends, and returns it."""
+            # Tag should be like 'a:lnT'
+            element = parent_element.find(qn(tag))
+            if element is None:
+                element = OxmlElement(tag)
+                parent_element.append(element)
+            return element
+
+        # --- End Get or Add Helper ---
+
+        # --- Main Logic ---
+        tcPr = cell._tc.get_or_add_tcPr()  # Get <a:tcPr> element
+
+        # Define border tags
+        border_tags = {
+            "top": "a:lnT",
+            "right": "a:lnR",
+            "bottom": "a:lnB",
+            "left": "a:lnL",
+            # Could add tl2br (top-left to bottom-right) and tr2bl diagonals if needed
+        }
+
+        # Apply style for each specified border side
+        for side, tag in border_tags.items():
+            if side in border_style:
+                line_element = get_or_add(tcPr, tag)
+                apply_line_properties(line_element, border_style[side])
+            # else:
+            # If a side (e.g., 'top') is *not* in border_style, should we
+            # explicitly remove its border? Current logic only modifies
+            # borders specified in the current style dictionary.
+            # To explicitly clear unspecified borders, you might do:
+            # line_element = tcPr.find(qn(tag))
+            # if line_element is not None:
+            #     apply_line_properties(line_element, {}) # Pass empty style to clear
 
     def _apply_table_styling(self):
         """
@@ -880,7 +978,7 @@ class PowerPointTableFormatter:
 # --- Main Public Function ---
 
 
-def add_dataframe_as_table(
+def add_table(
     slide: Slide, dataframe: pd.DataFrame, style_config: Optional[Dict[str, Any]] = None
 ) -> Optional[Table]:  # Return optional Table in case of failure
     """
