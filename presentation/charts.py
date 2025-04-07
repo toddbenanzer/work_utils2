@@ -1,12 +1,14 @@
 # -*- coding: utf-8 -*-
 """
 Utilities for adding pandas DataFrame charts to PowerPoint slides.
-Supports customizable stacked bar/column charts and can be extended.
+
+Provides functions to create and style charts based on pandas DataFrames,
+using a configurable dictionary for styling options. Raises standard errors
+for configuration issues or unsupported operations.
 """
 
 import copy
-import logging
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 import pandas as pd
 from pptx.chart.chart import Chart
@@ -24,16 +26,9 @@ from pptx.slide import Slide
 from pptx.text.text import Font
 from pptx.util import Inches, Pt
 
-# --- Configuration ---
-# Consider moving logging configuration outside this module if used application-wide
-logging.basicConfig(
-    level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-)
-logger = logging.getLogger(__name__)
-
 # --- Constants ---
 
-# Mapping for data label positions
+# Mapping for data label positions (user string to pptx enum)
 LABEL_POSITION_MAP: Dict[str, XL_LABEL_POSITION] = {
     "inside_end": XL_LABEL_POSITION.INSIDE_END,
     "outside_end": XL_LABEL_POSITION.OUTSIDE_END,
@@ -43,18 +38,17 @@ LABEL_POSITION_MAP: Dict[str, XL_LABEL_POSITION] = {
     # Add other positions if needed
 }
 
-# Mapping for legend positions
+# Mapping for legend positions (user string to pptx enum)
 LEGEND_POSITION_MAP: Dict[str, XL_LEGEND_POSITION] = {
     "top": XL_LEGEND_POSITION.TOP,
     "bottom": XL_LEGEND_POSITION.BOTTOM,
     "left": XL_LEGEND_POSITION.LEFT,
     "right": XL_LEGEND_POSITION.RIGHT,
-    # Use CORNER for the top-right position as TOP_RIGHT does not exist
-    "top_right": XL_LEGEND_POSITION.CORNER,
+    "top_right": XL_LEGEND_POSITION.CORNER,  # Use CORNER for top-right
     "corner": XL_LEGEND_POSITION.CORNER,
 }
 
-# Mapping for tick mark types
+# Mapping for tick mark types (user string to pptx enum)
 TICK_MARK_MAP: Dict[str, XL_TICK_MARK] = {
     "none": XL_TICK_MARK.NONE,
     "inside": XL_TICK_MARK.INSIDE,
@@ -62,8 +56,8 @@ TICK_MARK_MAP: Dict[str, XL_TICK_MARK] = {
     "cross": XL_TICK_MARK.CROSS,
 }
 
-# Default colors for series (used if not specified in style)
-# Consider defining these based on your presentation template's theme colors
+# Default colors for series (used if not specified in style['colors'])
+# Consider defining based on presentation template theme colors for consistency.
 DEFAULT_COLORS: Tuple[str, ...] = (
     "3C2F80",
     "2C1F10",
@@ -76,6 +70,17 @@ DEFAULT_COLORS: Tuple[str, ...] = (
     "A9A9A9",
     "5A5A5A",
 )
+
+# Supported chart type strings mapped to pptx enums
+CHART_TYPE_MAP: Dict[str, XL_CHART_TYPE] = {
+    "stacked_bar": XL_CHART_TYPE.BAR_STACKED,  # Horizontal
+    "stacked_column": XL_CHART_TYPE.COLUMN_STACKED,  # Vertical
+    "clustered_bar": XL_CHART_TYPE.BAR_CLUSTERED,
+    "clustered_column": XL_CHART_TYPE.COLUMN_CLUSTERED,
+    "line": XL_CHART_TYPE.LINE,
+    "line_markers": XL_CHART_TYPE.LINE_MARKERS,
+    # Add more mappings as needed (pie, area, xy_scatter etc.)
+}
 
 
 # --- Helper Functions ---
@@ -91,6 +96,8 @@ def deep_merge_dicts(
     if not isinstance(default_dict, dict):
         return copy.deepcopy(custom_dict)
     if not isinstance(custom_dict, dict):
+        # If custom_dict is not a dict, return a deep copy of it,
+        # replacing the default entirely at this level.
         return copy.deepcopy(custom_dict)
 
     result = copy.deepcopy(default_dict)
@@ -99,142 +106,128 @@ def deep_merge_dicts(
         if key in result and isinstance(result[key], dict) and isinstance(value, dict):
             result[key] = deep_merge_dicts(result[key], value)
         else:
-            result[key] = copy.deepcopy(value)  # Ensure deep copy of custom values too
+            # Ensure deep copy of custom values, overwriting or adding the key
+            result[key] = copy.deepcopy(value)
     return result
 
 
 def get_default_chart_style() -> Dict[str, Any]:
-    """Returns a default style configuration dictionary for charts."""
+    """Returns a simplified default style configuration dictionary for charts."""
     # Defined as a function to ensure a fresh copy each time
     return {
-        "chart_type": "stacked_bar",  # Default to horizontal stacked bar
-        "position": {"left": 1.0, "top": 1.5},
-        "dimensions": {"width": 8.0, "height": 5.0},
+        "chart_type": "stacked_bar",
+        "position": {"left": 1.0, "top": 1.5},  # Inches
+        "dimensions": {"width": 8.0, "height": 5.0},  # Inches
         "title": {
             "text": None,  # No title by default
-            "visible": True,  # Controls if space is allocated (even if text is None)
-            "font": {
-                "name": "Calibri",
-                "size": 14,
-                "bold": True,
-                "italic": False,
-                "color": (0, 0, 0),
-            },
+            "visible": True,  # Allocate space even if text is None
+            "font": {"size": 14, "bold": True},  # Simplified font options
         },
         "data_labels": {
             "enabled": True,
-            "position": "center",
-            "number_format": "0",  # Default to integer display
+            "position": "center",  # Default position
             "font": {
-                "name": "Calibri",
                 "size": 9,
                 "bold": False,
                 "color": (255, 255, 255),
-            },
+            },  # Default white
+            # "number_format": "0", # Removed, default is 'General'
         },
         "legend": {
             "enabled": True,
             "position": "bottom",
-            "include_in_layout": True,  # Let PowerPoint manage layout by default
-            "font": {"name": "Calibri", "size": 10},
+            "font": {"size": 10},
         },
         "category_axis": {
             "visible": True,
-            "tick_labels": {"visible": True, "font": {"name": "Calibri", "size": 10}},
-            "major_gridlines": False,
-            "minor_gridlines": False,
-            "tick_marks": "outside",
-            "line": {"visible": True},  # Control axis line visibility
+            "tick_labels": {"visible": True, "font": {"size": 10}},
+            # Removed: major/minor gridlines, tick_marks, line visibility defaults
         },
         "value_axis": {
             "visible": True,
-            "major_gridlines": True,
-            "minor_gridlines": False,
-            "tick_marks": "outside",
-            "tick_labels": {"visible": True, "font": {"name": "Calibri", "size": 10}},
-            "number_format": "General",  # Use Excel's default number format
-            "max_scale": None,  # Auto-scale by default
-            "min_scale": None,  # Auto-scale by default
-            "line": {"visible": True},  # Control axis line visibility
+            "major_gridlines": True,  # Keep major gridlines on by default
+            "tick_labels": {"visible": True, "font": {"size": 10}},
+            # Removed: minor gridlines, tick_marks, number_format, min/max_scale, line visibility defaults
         },
-        "plot_area": {
-            "border": {"visible": False},  # Control plot area border visibility
-            "fill": {"type": "none"},  # 'none', 'solid', 'gradient', etc.
-        },
-        "gap_width": 150,  # Percentage space between categories (for bar/column)
-        "overlap": 100,  # Percentage overlap for stacked (100) or clustered (-ve to +ve)
-        "colors": {},  # Dictionary to map series names to specific hex colors
+        # Removed plot_area defaults (border, fill) - assume invisible/none
+        "gap_width": 150,  # Default gap width for bar/column
+        "overlap": 100,  # Default overlap (100 for stacked)
+        "colors": {},  # Map series names to hex colors (empty means use DEFAULT_COLORS)
     }
 
 
 def create_chart_style(custom_style: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """
     Creates a complete chart style by merging custom settings with defaults.
+
+    Raises:
+    -------
+    TypeError
+        If custom_style is provided but is not a dictionary.
     """
     base_style = get_default_chart_style()
     if custom_style is None:
         return base_style
-    # Ensure custom_style is a dict before merging
     if not isinstance(custom_style, dict):
-        logger.warning("custom_style is not a dictionary, ignoring it.")
-        return base_style
+        raise TypeError("custom_style must be a dictionary or None.")
     return deep_merge_dicts(base_style, custom_style)
 
 
-# --- Chart Utility Functions ---
-
-
 def _apply_font_settings(font_obj: Font, font_config: Dict[str, Any]) -> None:
-    """Applies common font settings from a config dict to a Font object."""
-    font_obj.name = font_config.get("name", font_obj.name)
+    """
+    Applies font settings from a config dict to a Font object.
+
+    Raises:
+    -------
+    ValueError
+        If size is not numeric, color tuple is invalid, or hex string is invalid.
+    TypeError
+        If size is of an incompatible type.
+    AttributeError
+        If font_obj does not have expected attributes like .color.rgb.
+    """
+    # Apply settings only if they exist in the config
+    if "name" in font_config:
+        font_obj.name = font_config["name"]
     if "size" in font_config:
-        try:
-            font_obj.size = Pt(int(font_config["size"]))
-        except (ValueError, TypeError):
-            logger.warning(
-                f"Invalid font size value: {font_config['size']}. Must be numeric."
-            )
+        font_obj.size = Pt(int(font_config["size"]))  # Raises ValueError/TypeError
     if "bold" in font_config:
         font_obj.bold = bool(font_config["bold"])
     if "italic" in font_config:
         font_obj.italic = bool(font_config["italic"])
 
     color_val = font_config.get("color")
-    if isinstance(color_val, tuple) and len(color_val) == 3:
-        try:
+    if color_val is not None:
+        if isinstance(color_val, tuple) and len(color_val) == 3:
+            # Raises ValueError/TypeError if elements aren't int 0-255
             font_obj.color.rgb = RGBColor(
                 int(color_val[0]), int(color_val[1]), int(color_val[2])
             )
-        except (ValueError, TypeError):
-            logger.warning(
-                f"Invalid RGB color tuple: {color_val}. Values must be integers 0-255."
-            )
-    elif isinstance(color_val, str):  # Allow hex string
-        try:
+        elif isinstance(color_val, str):  # Allow hex string
+            # Raises ValueError if hex string is invalid
             font_obj.color.rgb = RGBColor.from_string(color_val)
-        except ValueError:
-            logger.warning(f"Invalid hex color string: {color_val}")
+        else:
+            raise ValueError(
+                f"Invalid color format: {color_val}. Use 3-tuple RGB or hex string."
+            )
 
 
 def _get_chart_type_enum(type_str: str) -> XL_CHART_TYPE:
-    """Maps a string chart type to its python-pptx enum."""
-    type_map = {
-        "stacked_bar": XL_CHART_TYPE.BAR_STACKED,  # Horizontal
-        "stacked_column": XL_CHART_TYPE.COLUMN_STACKED,  # Vertical
-        "clustered_bar": XL_CHART_TYPE.BAR_CLUSTERED,
-        "clustered_column": XL_CHART_TYPE.COLUMN_CLUSTERED,
-        "line": XL_CHART_TYPE.LINE,
-        "line_markers": XL_CHART_TYPE.LINE_MARKERS,
-        # Add more mappings as needed (pie, area, xy_scatter etc.)
-    }
-    default_type = XL_CHART_TYPE.BAR_STACKED
-    enum_type = type_map.get(type_str.lower())
-    if enum_type is None:
-        logger.warning(
-            f"Unsupported chart type '{type_str}'. Defaulting to {default_type.name}."
+    """
+    Maps a string chart type to its python-pptx enum.
+
+    Raises:
+    -------
+    ValueError
+        If the type_str is not a supported chart type key in CHART_TYPE_MAP.
+    """
+    type_str_lower = type_str.lower()
+    if type_str_lower not in CHART_TYPE_MAP:
+        raise ValueError(
+            f"Unsupported chart type: '{type_str}'. Supported types are: "
+            f"{', '.join(CHART_TYPE_MAP.keys())}"
         )
-        return default_type
-    return enum_type
+    return CHART_TYPE_MAP[type_str_lower]
 
 
 # --- PowerPoint Chart Formatter Class ---
@@ -243,6 +236,8 @@ def _get_chart_type_enum(type_str: str) -> XL_CHART_TYPE:
 class PowerPointChartFormatter:
     """
     Creates and styles a PowerPoint chart from a pandas DataFrame based on a style config.
+    Handles chart creation and applies formatting options, raising errors on failure
+    or configuration issues.
     """
 
     def __init__(self, slide: Slide, dataframe: pd.DataFrame, style: Dict[str, Any]):
@@ -255,38 +250,45 @@ class PowerPointChartFormatter:
             The PowerPoint slide to add the chart to.
         dataframe : pd.DataFrame
             The data to visualize. Assumes the first column contains categories
-            and subsequent columns contain series data.
+            and subsequent columns contain series data. NaN values will be
+            passed as None to the chart data, potentially creating gaps (e.g., in line charts).
+            Users should impute data (e.g., with 0) before passing if gaps are not desired.
         style : dict
-            A complete style configuration dictionary (use create_chart_style()).
+            A complete style configuration dictionary (result of create_chart_style()).
+
+        Raises:
+        -------
+        ValueError
+            If the input DataFrame is empty or has fewer than two columns.
+        TypeError
+            If 'dataframe' is not a pandas DataFrame or 'style' is not a dictionary.
         """
-        if not isinstance(dataframe, pd.DataFrame) or dataframe.empty:
-            raise ValueError("Input 'dataframe' must be a non-empty pandas DataFrame.")
-        if not isinstance(style, dict):
-            # Should not happen if create_chart_style is used, but defensive check.
-            raise TypeError("Input 'style' must be a dictionary.")
+        if not isinstance(dataframe, pd.DataFrame):
+            raise TypeError("Input 'dataframe' must be a pandas DataFrame.")
+        if dataframe.empty:
+            raise ValueError("Input 'dataframe' cannot be empty.")
         if dataframe.shape[1] < 2:
             raise ValueError(
                 "DataFrame must have at least two columns (categories + 1 series)."
             )
+        if not isinstance(style, dict):
+            # Should be caught by create_chart_style, but defensive check.
+            raise TypeError("Input 'style' must be a dictionary.")
 
         self.slide = slide
-        # Ensure we work with a copy, especially if manipulating data later
+        # Work with a copy to avoid modifying the original DataFrame.
+        # Handle potential NaN values according to user preference (None).
         self.dataframe = dataframe.copy()
         self.style = style  # Assumes style is already merged with defaults
-        self.chart: Optional[Chart] = None  # Initialize chart attribute
+        self.chart: Optional[Chart] = None  # Will hold the pptx chart object
+        self._chart_shape: Optional[GraphicFrame] = (
+            None  # Will hold the chart container
+        )
 
-    def _create_chart_object(self) -> None:
-        """Creates the chart shape on the slide and populates with data."""
-        pos_cfg = self.style.get("position", {})
-        dim_cfg = self.style.get("dimensions", {})
-        chart_type_str = self.style.get(
-            "chart_type", "stacked_bar"
-        )  # Default if missing
-
-        xl_chart_type = _get_chart_type_enum(chart_type_str)
-
-        # --- Prepare Chart Data ---
+    def _prepare_chart_data(self) -> CategoryChartData:
+        """Prepares the CategoryChartData object from the DataFrame."""
         chart_data = CategoryChartData()
+
         # Assume first column is category labels
         categories_col = self.dataframe.columns[0]
         # Ensure categories are strings for pptx
@@ -295,276 +297,331 @@ class PowerPointChartFormatter:
         # Subsequent columns are series
         data_cols = self.dataframe.columns[1:]
         for col in data_cols:
-            # Ensure numeric data, replace errors/NaNs with 0 for chart stability
-            # You might want different NaN handling (e.g., None for gaps in line charts)
-            series_data = (
-                pd.to_numeric(self.dataframe[col], errors="coerce").fillna(0).tolist()
-            )
-            chart_data.add_series(str(col), series_data)  # Series name must be string
+            # Convert to numeric, coercing errors. Fill resulting NaN with None.
+            # Users should handle imputation (e.g., to 0) *before* calling
+            # add_chart if None values (gaps) are not desired.
+            series_data = pd.to_numeric(self.dataframe[col], errors="coerce")
+            # Convert pandas NA (pd.NA or np.nan) to None for pptx
+            series_data_list: List[Union[float, int, None]] = [
+                val if pd.notna(val) else None for val in series_data
+            ]
+            chart_data.add_series(
+                str(col), series_data_list
+            )  # Series name must be string
 
-        # --- Add Chart Shape to Slide ---
+        return chart_data
+
+    def _create_chart_object(self) -> None:
+        """Creates the chart shape on the slide and populates with data."""
+        pos_cfg = self.style.get("position", {})
+        dim_cfg = self.style.get("dimensions", {})
+        # Default to stacked_bar if not provided (though default style has it)
+        chart_type_str = self.style.get("chart_type", "stacked_bar")
+
+        # Raises ValueError for unsupported type string
+        xl_chart_type = _get_chart_type_enum(chart_type_str)
+
+        chart_data = self._prepare_chart_data()
+
+        # Use .get with defaults for safety, raise errors on conversion if values invalid
         try:
-            # Use .get with defaults for position/dimensions for safety
-            left = Inches(pos_cfg.get("left", 1.0))
-            top = Inches(pos_cfg.get("top", 1.5))
-            width = Inches(dim_cfg.get("width", 8.0))
-            height = Inches(dim_cfg.get("height", 5.0))
+            left = Inches(float(pos_cfg.get("left", 1.0)))
+            top = Inches(float(pos_cfg.get("top", 1.5)))
+            width = Inches(float(dim_cfg.get("width", 8.0)))
+            height = Inches(float(dim_cfg.get("height", 5.0)))
+        except (ValueError, TypeError) as e:
+            raise ValueError(f"Invalid position or dimension value: {e}") from e
 
-            chart_shape: GraphicFrame = self.slide.shapes.add_chart(
-                xl_chart_type, left, top, width, height, chart_data
-            )
-            self.chart = chart_shape.chart
-            title_text = self.style.get("title", {}).get("text", "Untitled")
-            logger.info(
-                f"Chart '{title_text}' created successfully (Type: {xl_chart_type.name})."
-            )
-
-        except Exception as e:
-            logger.error(f"Failed to add chart shape to slide: {e}", exc_info=True)
-            self.chart = None  # Ensure chart is None on failure
-            raise  # Re-raise exception after logging
+        # Add chart shape to slide - this can raise various pptx internal errors
+        self._chart_shape = self.slide.shapes.add_chart(
+            xl_chart_type, left, top, width, height, chart_data
+        )
+        self.chart = self._chart_shape.chart  # Assign the chart object
 
     def _apply_chart_title(self) -> None:
         """Applies title settings based on the style configuration."""
         if not self.chart:
-            return
+            return  # Should not happen if called correctly
+
         title_config = self.style.get("title", {})
         title_text = title_config.get("text")
-        is_visible = title_config.get("visible", True)  # Check visibility flag
+        is_visible = title_config.get("visible", True)  # Default to visible
 
-        self.chart.has_title = bool(is_visible)  # Set visibility based on flag
+        self.chart.has_title = bool(is_visible)
 
-        if self.chart.has_title and title_text:
-            # Only set text and format if visible and text is provided
-            self.chart.chart_title.has_text_frame = True
-            tf = self.chart.chart_title.text_frame
+        if self.chart.has_title and title_text is not None:
+            # Accessing chart_title assumes it exists when has_title is True
+            title_obj = self.chart.chart_title
+            title_obj.has_text_frame = True
+            tf = title_obj.text_frame
             tf.text = str(title_text)  # Ensure text is string
-            tf.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT  # Adjust title box size
+            tf.auto_size = MSO_AUTO_SIZE.SHAPE_TO_FIT_TEXT
 
             font_config = title_config.get("font")
-            if font_config and tf.paragraphs:
-                # Title text is usually in the first paragraph, first run
+            if font_config:
+                # Assuming text is in the first paragraph, first run
                 run = (
                     tf.paragraphs[0].runs[0]
                     if tf.paragraphs[0].runs
                     else tf.paragraphs[0].add_run()
                 )
+                # _apply_font_settings will raise errors for invalid configs
                 _apply_font_settings(run.font, font_config)
 
-    def _apply_axis_settings(self) -> None:
-        """Applies settings for category and value axes, including plot area border."""
+    def _apply_category_axis_settings(self) -> None:
+        """Applies settings for the category axis."""
         if not self.chart:
             return
 
-        # --- Category Axis ---
-        cat_axis_config = self.style.get("category_axis", {})
-        if hasattr(self.chart, "category_axis"):
-            category_axis = self.chart.category_axis
-            category_axis.visible = cat_axis_config.get("visible", True)
+        config = self.style.get("category_axis", {})
+        # Access axis directly, let AttributeError raise if it doesn't exist (unexpected)
+        axis = self.chart.category_axis
 
-            if category_axis.visible:
-                # Gridlines
-                category_axis.has_major_gridlines = cat_axis_config.get(
-                    "major_gridlines", False
-                )
-                category_axis.has_minor_gridlines = cat_axis_config.get(
-                    "minor_gridlines", False
-                )
+        if "visible" in config:
+            axis.visible = bool(config["visible"])
 
-                # Tick Marks
-                tick_mark_str = cat_axis_config.get("tick_marks", "none").lower()
-                category_axis.major_tick_mark = TICK_MARK_MAP.get(
+        if axis.visible:  # Only apply sub-settings if axis is visible
+            if "major_gridlines" in config:
+                axis.has_major_gridlines = bool(config["major_gridlines"])
+            if "minor_gridlines" in config:
+                axis.has_minor_gridlines = bool(config["minor_gridlines"])
+
+            if "tick_marks" in config:
+                tick_mark_str = str(config["tick_marks"]).lower()
+                # Use .get for safety, default to NONE if key invalid
+                axis.major_tick_mark = TICK_MARK_MAP.get(
                     tick_mark_str, XL_TICK_MARK.NONE
                 )
-                category_axis.minor_tick_mark = (
-                    XL_TICK_MARK.NONE
-                )  # Minor usually not needed for category
+                # axis.minor_tick_mark = ... # Typically NONE for category
 
-                # Tick Labels Font and Visibility
-                tick_labels_cfg = cat_axis_config.get("tick_labels", {})
-                if hasattr(category_axis, "tick_labels"):
-                    category_axis.has_tick_labels = tick_labels_cfg.get("visible", True)
-                    if category_axis.has_tick_labels:
-                        font_config = tick_labels_cfg.get("font")
-                        if font_config:
-                            _apply_font_settings(
-                                category_axis.tick_labels.font, font_config
-                            )
+            # Tick Labels
+            tick_labels_cfg = config.get("tick_labels", {})
+            if "visible" in tick_labels_cfg:
+                axis.has_tick_labels = bool(tick_labels_cfg["visible"])
 
-                # Axis Line Visibility
-                line_cfg = cat_axis_config.get("line", {})
-                if hasattr(category_axis.format, "line"):
-                    if not line_cfg.get("visible", True):
-                        category_axis.format.line.fill.background()  # Make line invisible
-                    # TODO: Add line color/style customization if needed
+            if axis.has_tick_labels:
+                font_config = tick_labels_cfg.get("font")
+                if font_config:
+                    # Access tick_labels directly, assuming it exists if has_tick_labels=True
+                    _apply_font_settings(axis.tick_labels.font, font_config)
 
-        # --- Value Axis ---
-        val_axis_config = self.style.get("value_axis", {})
-        if hasattr(self.chart, "value_axis"):
-            value_axis = self.chart.value_axis
-            value_axis.visible = val_axis_config.get("visible", True)
+            # Axis Line Visibility/Formatting
+            line_cfg = config.get("line", {})
+            if "visible" in line_cfg:
+                # Access format.line, let AttributeError raise if structure is unexpected
+                if not bool(line_cfg["visible"]):
+                    axis.format.line.fill.background()  # Make invisible
+                else:
+                    # TODO: Add line color/style customization if needed when visible=True
+                    pass  # Line is visible by default if not explicitly hidden
 
-            if value_axis.visible:
-                # Gridlines
-                value_axis.has_major_gridlines = val_axis_config.get(
-                    "major_gridlines", True
-                )
-                value_axis.has_minor_gridlines = val_axis_config.get(
-                    "minor_gridlines", False
-                )
+    def _apply_value_axis_settings(self) -> None:
+        """Applies settings for the value axis."""
+        if not self.chart:
+            return
 
-                # Tick Marks
-                tick_mark_str = val_axis_config.get("tick_marks", "none").lower()
-                value_axis.major_tick_mark = TICK_MARK_MAP.get(
+        config = self.style.get("value_axis", {})
+        # Access axis directly, let AttributeError raise if it doesn't exist
+        axis = self.chart.value_axis
+
+        if "visible" in config:
+            axis.visible = bool(config["visible"])
+
+        if axis.visible:  # Only apply sub-settings if axis is visible
+            if "major_gridlines" in config:
+                axis.has_major_gridlines = bool(config["major_gridlines"])
+            if "minor_gridlines" in config:
+                axis.has_minor_gridlines = bool(config["minor_gridlines"])
+
+            if "tick_marks" in config:
+                tick_mark_str = str(config["tick_marks"]).lower()
+                axis.major_tick_mark = TICK_MARK_MAP.get(
                     tick_mark_str, XL_TICK_MARK.NONE
                 )
-                # You might want minor ticks configurable:
-                # value_axis.minor_tick_mark = TICK_MARK_MAP.get(tick_mark_str, XL_TICK_MARK.NONE)
+                # axis.minor_tick_mark = ... # Could be configured too
 
-                # Tick Labels Font, Format, Visibility
-                tick_labels_cfg = val_axis_config.get("tick_labels", {})
-                if hasattr(value_axis, "tick_labels"):
-                    value_axis.has_tick_labels = tick_labels_cfg.get("visible", True)
-                    if value_axis.has_tick_labels:
-                        font_config = tick_labels_cfg.get("font")
-                        if font_config:
-                            _apply_font_settings(
-                                value_axis.tick_labels.font, font_config
-                            )
+            # Axis Scale Limits (raise ValueError/TypeError on float conversion)
+            if "max_scale" in config and config["max_scale"] is not None:
+                axis.maximum_scale = float(config["max_scale"])
+            if "min_scale" in config and config["min_scale"] is not None:
+                axis.minimum_scale = float(config["min_scale"])
 
-                        # Number format for axis labels
-                        number_format = val_axis_config.get("number_format", "General")
-                        value_axis.tick_labels.number_format = number_format
-                        # Link format to source only if using Excel's default
-                        value_axis.tick_labels.number_format_is_linked = (
-                            number_format == "General"
-                        )
+            # Tick Labels
+            tick_labels_cfg = config.get("tick_labels", {})
+            if "visible" in tick_labels_cfg:
+                axis.has_tick_labels = bool(tick_labels_cfg["visible"])
 
-                # Axis Scale Limits
-                max_scale = val_axis_config.get("max_scale")
-                min_scale = val_axis_config.get("min_scale")
-                if max_scale is not None:
-                    try:
-                        value_axis.maximum_scale = float(max_scale)
-                    except (ValueError, TypeError):
-                        logger.warning(f"Invalid max_scale: {max_scale}")
-                if min_scale is not None:
-                    try:
-                        value_axis.minimum_scale = float(min_scale)
-                    except (ValueError, TypeError):
-                        logger.warning(f"Invalid min_scale: {min_scale}")
+            if axis.has_tick_labels:
+                # Access tick_labels directly
+                if "number_format" in config:
+                    axis.tick_labels.number_format = str(config["number_format"])
+                    # Link format to source data only if using Excel's default
+                    axis.tick_labels.number_format_is_linked = (
+                        axis.tick_labels.number_format == "General"
+                    )
+                else:
+                    # Explicitly set default if not in config
+                    axis.tick_labels.number_format = "General"
+                    axis.tick_labels.number_format_is_linked = True
 
-                # Axis Line Visibility
-                line_cfg = val_axis_config.get("line", {})
-                if hasattr(value_axis.format, "line"):
-                    if not line_cfg.get("visible", True):
-                        value_axis.format.line.fill.background()  # Make line invisible
-                    # TODO: Add line color/style customization if needed
+                font_config = tick_labels_cfg.get("font")
+                if font_config:
+                    _apply_font_settings(axis.tick_labels.font, font_config)
 
-        # --- Plot Area Formatting (Border and Fill) ---
-        plot_cfg = self.style.get("plot_area", {})
-        plot_border_cfg = plot_cfg.get("border", {})
+            # Axis Line Visibility/Formatting
+            line_cfg = config.get("line", {})
+            if "visible" in line_cfg:
+                # Access format.line directly
+                if not bool(line_cfg["visible"]):
+                    axis.format.line.fill.background()  # Make invisible
+                else:
+                    # TODO: Add line color/style customization if needed when visible=True
+                    pass  # Line is visible by default if not explicitly hidden
 
-        # Check if the chart object actually has a plot_area attribute
-        if hasattr(self.chart, "plot_area"):
-            plot_area = self.chart.plot_area  # Access plot_area directly from the chart
+    def _apply_plot_area_settings(self) -> None:
+        """Applies settings for the plot area (border, fill), if available."""
+        if not self.chart:
+            return
 
-            # --- Plot Area Border ---
-            # Check visibility setting from style config
-            if not plot_border_cfg.get("visible", False):
-                # Check if the plot area has line formatting capabilities
+        # Check if the chart object has the plot_area attribute before proceeding
+        if not hasattr(self.chart, "plot_area"):
+            # Silently skip if plot_area attribute doesn't exist for this chart type
+            # Alternatively, could issue a warning:
+            # import warnings
+            # warnings.warn(f"Chart type {self.chart.chart_type.name} might not support direct plot_area formatting.")
+            return
+
+        config = self.style.get("plot_area", {})
+        # Access plot_area only if we know it exists
+        plot_area = self.chart.plot_area
+
+        # --- Plot Area Border ---
+        border_cfg = config.get("border", {})
+        if "visible" in border_cfg:
+            # Access format.line directly; assume it exists on plot_area if plot_area exists
+            if not bool(border_cfg["visible"]):
+                # Check if line formatting exists before trying to modify it
                 if hasattr(plot_area.format, "line") and plot_area.format.line:
-                    # Make border invisible by setting its fill to background
                     plot_area.format.line.fill.background()
-                    logger.debug("Plot area border set to invisible.")
             else:
                 # TODO: Add plot area border color/style customization if visible
-                # Example:
-                # if hasattr(plot_area.format, 'line') and plot_area.format.line:
-                #    line = plot_area.format.line
-                #    line.color.rgb = RGBColor.from_string(plot_border_cfg.get("color", "000000"))
-                #    line.width = Pt(plot_border_cfg.get("width", 1))
-                #    # Add dash style etc.
-                logger.debug(
-                    "Plot area border visibility is enabled (styling not implemented yet)."
-                )
+                if hasattr(plot_area.format, "line") and plot_area.format.line:
+                    # Example structure, assumes line object exists:
+                    # line = plot_area.format.line
+                    # line.color.rgb = RGBColor.from_string(border_cfg.get("color", "000000")) # Raises ValueError if invalid
+                    # line.width = Pt(border_cfg.get("width", 1)) # Raises ValueError/TypeError if invalid
+                    pass  # Border visible, potentially styled
 
-            # --- Plot Area Fill ---
-            # TODO: Add plot area fill customization (solid, gradient, none) based on plot_cfg.get("fill")
-            # fill_cfg = plot_cfg.get("fill", {})
-            # fill_type = fill_cfg.get("type", "none")
-            # if hasattr(plot_area.format, 'fill'):
-            #    fill = plot_area.format.fill
-            #    if fill_type == "none":
-            #        fill.background()
-            #    elif fill_type == "solid":
-            #        fill.solid()
-            #        fill.fore_color.rgb = RGBColor.from_string(fill_cfg.get("color", "FFFFFF"))
-            #    # Add gradient etc.
+        # --- Plot Area Fill ---
+        fill_cfg = config.get("fill", {})
+        if "type" in fill_cfg:
+            # Access format.fill directly; assume it exists on plot_area if plot_area exists
+            if hasattr(plot_area.format, "fill") and plot_area.format.fill:
+                fill = plot_area.format.fill
+                fill_type = str(fill_cfg["type"]).lower()
+                if fill_type == "none":
+                    fill.background()
+                elif fill_type == "solid":
+                    fill.solid()
+                    if "color" in fill_cfg:
+                        # Raises ValueError for invalid hex
+                        fill.fore_color.rgb = RGBColor.from_string(
+                            str(fill_cfg["color"])
+                        )
+                # TODO: Add support for other fill types like 'gradient' if needed
+                else:
+                    # Raise error for unsupported fill type configuration
+                    raise ValueError(f"Unsupported plot area fill type: '{fill_type}'")
 
-        else:
-            logger.warning(
-                "Chart object does not have a 'plot_area' attribute. Cannot apply plot area formatting."
-            )
+        # --- Plot Area Fill ---
+        fill_cfg = config.get("fill", {})
+        if "type" in fill_cfg:
+            # Access format.fill directly
+            fill = plot_area.format.fill
+            fill_type = str(fill_cfg["type"]).lower()
+            if fill_type == "none":
+                fill.background()
+            elif fill_type == "solid":
+                fill.solid()
+                if "color" in fill_cfg:
+                    # Raises ValueError for invalid hex
+                    fill.fore_color.rgb = RGBColor.from_string(str(fill_cfg["color"]))
+            # TODO: Add support for other fill types like 'gradient' if needed
+            else:
+                # Raise error for unsupported fill type configuration
+                raise ValueError(f"Unsupported plot area fill type: '{fill_type}'")
 
     def _apply_legend_settings(self) -> None:
         """Applies legend settings (position, visibility, font)."""
         if not self.chart:
             return
-        legend_config = self.style.get("legend", {})
-        self.chart.has_legend = legend_config.get("enabled", True)
 
-        if (
-            self.chart.has_legend
-            and hasattr(self.chart, "legend")
-            and self.chart.legend
-        ):
+        config = self.style.get("legend", {})
+
+        if "enabled" in config:
+            self.chart.has_legend = bool(config["enabled"])
+
+        if self.chart.has_legend:
+            # Access legend directly, assume it exists if has_legend is True
             legend = self.chart.legend
-            position_str = legend_config.get("position", "bottom").lower()
-            legend.position = LEGEND_POSITION_MAP.get(
-                position_str, XL_LEGEND_POSITION.BOTTOM  # Default to bottom if invalid
-            )
-            # Control whether legend overlaps chart area
-            legend.include_in_layout = legend_config.get("include_in_layout", True)
 
-            # Apply font settings to legend text
-            font_config = legend_config.get("font")
-            if font_config and hasattr(legend, "font"):
+            if "position" in config:
+                position_str = str(config["position"]).lower()
+                # Use .get for safety, default to BOTTOM if key invalid
+                legend.position = LEGEND_POSITION_MAP.get(
+                    position_str, XL_LEGEND_POSITION.BOTTOM
+                )
+
+            if "include_in_layout" in config:
+                # Let pptx manage layout (True) or allow overlap (False)
+                legend.include_in_layout = bool(config["include_in_layout"])
+
+            font_config = config.get("font")
+            if font_config:
+                # Access legend.font directly
                 _apply_font_settings(legend.font, font_config)
 
     def _apply_data_labels(self) -> None:
         """Applies data label settings (visibility, position, font, number format)."""
-        if not self.chart or not self.chart.plots:  # Check plots exist
+        if not self.chart or not self.chart.plots:
             return
-        data_label_config = self.style.get("data_labels", {})
-        # Assuming styling applies to the first plot (common for bar/column/line)
+
+        config = self.style.get("data_labels", {})
+        # Apply to the first plot (common for bar/column/line)
+        # Access plot directly, let IndexError raise if no plots (unexpected)
         plot = self.chart.plots[0]
 
-        # Check if plot object supports data labels
-        if not hasattr(plot, "has_data_labels"):
-            logger.warning(
-                f"Chart type {self.chart.chart_type.name} might not support plot-level data labels."
-            )
-            return
+        # Check if plot object supports data labels - raise error if trying to enable on unsupported plot
+        if "enabled" in config:
+            enable_labels = bool(config["enabled"])
+            # Try setting has_data_labels. If it fails, the plot type might not support it.
+            # Let AttributeError raise in that case.
+            plot.has_data_labels = enable_labels
 
-        plot.has_data_labels = data_label_config.get("enabled", False)
-
-        if plot.has_data_labels and hasattr(plot, "data_labels"):
+        if plot.has_data_labels:
+            # Access data_labels directly, assume it exists if has_data_labels is True
             data_labels = plot.data_labels
-            position_str = data_label_config.get("position", "center").lower()
-            data_labels.position = LABEL_POSITION_MAP.get(
-                position_str, XL_LABEL_POSITION.CENTER  # Default to center
-            )
 
-            # Apply number format if specified
-            number_format = data_label_config.get("number_format", "General")
-            data_labels.number_format = number_format
-            # Link format to source only if using Excel's default
-            data_labels.number_format_is_linked = number_format == "General"
+            if "position" in config:
+                position_str = str(config["position"]).lower()
+                # Use .get, default to CENTER
+                data_labels.position = LABEL_POSITION_MAP.get(
+                    position_str, XL_LABEL_POSITION.CENTER
+                )
 
-            # Apply font settings
-            font_config = data_label_config.get("font")
-            if font_config and hasattr(data_labels, "font"):
+            if "number_format" in config:
+                data_labels.number_format = str(config["number_format"])
+                data_labels.number_format_is_linked = (
+                    data_labels.number_format == "General"
+                )
+            else:
+                # Explicitly set default if not in config
+                data_labels.number_format = "General"
+                data_labels.number_format_is_linked = True
+
+            font_config = config.get("font")
+            if font_config:
+                # Access data_labels.font directly
                 _apply_font_settings(data_labels.font, font_config)
 
     def _apply_series_settings(self) -> None:
@@ -572,127 +629,135 @@ class PowerPointChartFormatter:
         if not self.chart or not self.chart.series:
             return
 
-        series_colors = self.style.get("colors", {})  # Map series name -> hex color
+        series_colors_config = self.style.get(
+            "colors", {}
+        )  # Map series name -> hex color
 
         for i, series in enumerate(self.chart.series):
             # Determine color: Use specific color if defined, else default palette
-            # Use series.name which should match the DataFrame column header
-            color_hex = series_colors.get(series.name)
+            color_hex = series_colors_config.get(
+                series.name
+            )  # Use series.name (matches DataFrame col)
             if not color_hex:
-                # Fallback to default color palette based on series index
                 color_index = i % len(DEFAULT_COLORS)
                 color_hex = DEFAULT_COLORS[color_index]
-                # Log fallback only if specific colors were expected but not found for this series
-                # if series_colors: # Only log if custom colors dict is not empty
-                #    logger.debug(f"No specific color found for series '{series.name}'. Using default color {color_hex} at index {color_index}.")
 
             # Apply fill color (works for bar, column, area, pie points)
+            # Access format.fill directly. Let AttributeError/ValueError propagate.
             try:
-                if hasattr(series.format, "fill"):
-                    fill = series.format.fill
-                    fill.solid()  # Set to solid color fill
-                    fill.fore_color.rgb = RGBColor.from_string(color_hex)
-                else:
-                    logger.debug(
-                        f"Series '{series.name}' format does not have 'fill' attribute."
-                    )
-
-            except ValueError:
-                logger.warning(
-                    f"Invalid hex color string '{color_hex}' for series '{series.name}'. Skipping color."
-                )
-            except AttributeError as ae:
-                # Catch potential issues if accessing fill properties fails
-                logger.warning(
-                    f"Could not set fill for series '{series.name}'. Format may differ or be unavailable. Error: {ae}"
+                fill = series.format.fill
+                fill.solid()
+                fill.fore_color.rgb = RGBColor.from_string(
+                    str(color_hex)
+                )  # Ensure hex is str
+            except ValueError as e:
+                raise ValueError(
+                    f"Invalid hex color string '{color_hex}' for series '{series.name}'."
+                ) from e
+            except AttributeError:
+                # If .format.fill is missing, this series type might not support solid fill.
+                # Raise error indicating potential incompatibility or unexpected object structure.
+                raise AttributeError(
+                    f"Cannot apply fill color to series '{series.name}'. Series type may not support direct fill formatting."
                 )
 
-            # Apply line color/style (for line charts)
-            # TODO: Extend this based on chart type if needed
-            # if self.chart.chart_type in [XL_CHART_TYPE.LINE, XL_CHART_TYPE.LINE_MARKERS, XL_CHART_TYPE.XY_SCATTER_LINES] :
-            #      if hasattr(series.format, 'line'):
+            # TODO: Apply line color/style (for line charts) based on config
+            # if self.chart.chart_type in [XL_CHART_TYPE.LINE, XL_CHART_TYPE.LINE_MARKERS]:
+            #     try:
             #         line = series.format.line
-            #         line.color.rgb = RGBColor.from_string(color_hex) # Or use a separate line color config
-            #         # line.width = Pt(2.0) # Example: Set line width
+            #         line.color.rgb = RGBColor.from_string(str(color_hex)) # Or use separate line color config
+            #         # line.width = Pt(style.get("line_width", 2.0))
+            #     except ValueError as e: ...
+            #     except AttributeError: ...
 
     def _apply_bar_column_settings(self) -> None:
         """Applies settings specific to bar/column charts (gap width, overlap)."""
         if not self.chart or not self.chart.plots:
-            return  # Check plots exist
+            return
 
-        # These settings are typically on the plot object for bar/column types
-        plot = self.chart.plots[0]
-        chart_type = self.chart.chart_type
-
-        # Check if chart type supports these properties
-        if chart_type in (
+        # Check if the chart type conceptually supports these settings
+        supported_types = (
             XL_CHART_TYPE.BAR_STACKED,
             XL_CHART_TYPE.COLUMN_STACKED,
             XL_CHART_TYPE.BAR_CLUSTERED,
             XL_CHART_TYPE.COLUMN_CLUSTERED,
-            # Add other relevant types like BAR_STACKED_100, etc. if needed
-        ):
-            # Gap Width
-            if hasattr(plot, "gap_width"):
-                gap_width = self.style.get("gap_width", 150)  # Default from style
-                try:
-                    plot.gap_width = int(gap_width)
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid gap_width: {gap_width}")
-            else:
-                logger.debug(
-                    f"Plot for chart type {chart_type.name} has no 'gap_width' attribute."
-                )
+            # Add BAR_STACKED_100 etc. if needed
+        )
 
-            # Overlap
-            if hasattr(plot, "overlap"):
-                overlap = self.style.get(
-                    "overlap", 100 if "STACKED" in chart_type.name else 0
-                )  # Sensible default based on type
-                try:
-                    plot.overlap = int(overlap)
-                except (ValueError, TypeError):
-                    logger.warning(f"Invalid overlap: {overlap}")
-            else:
-                logger.debug(
-                    f"Plot for chart type {chart_type.name} has no 'overlap' attribute."
-                )
+        if self.chart.chart_type in supported_types:
+            # Access plot directly, assume first plot holds these settings
+            plot = self.chart.plots[0]
 
-    def add_to_slide(self) -> Optional[Chart]:
+            # Apply gap width if present in style config
+            if "gap_width" in self.style:
+                try:
+                    # Access plot.gap_width directly, let AttributeError raise if missing
+                    # Let ValueError/TypeError raise on int conversion
+                    plot.gap_width = int(self.style["gap_width"])
+                except (ValueError, TypeError) as e:
+                    raise type(e)(
+                        f"Invalid gap_width value: {self.style['gap_width']}"
+                    ) from e
+                except AttributeError:
+                    raise AttributeError(
+                        f"Chart type {self.chart.chart_type.name} plot does not support 'gap_width'."
+                    )
+
+            # Apply overlap if present in style config
+            if "overlap" in self.style:
+                try:
+                    # Access plot.overlap directly
+                    plot.overlap = int(self.style["overlap"])
+                except (ValueError, TypeError) as e:
+                    raise type(e)(
+                        f"Invalid overlap value: {self.style['overlap']}"
+                    ) from e
+                except AttributeError:
+                    raise AttributeError(
+                        f"Chart type {self.chart.chart_type.name} plot does not support 'overlap'."
+                    )
+
+        # If chart type doesn't support these, attempting to set them from the
+        # config might be considered an error, but we silently ignore if not in supported_types for now.
+        # Alternatively, could raise ValueError if gap_width/overlap provided for non-bar/col chart.
+
+    def add_to_slide(self) -> Chart:
         """
         Executes the full process: creates the chart object and applies all styles.
 
         Returns:
         --------
-        Optional[pptx.chart.chart.Chart]
-            The created and styled PowerPoint chart object, or None if creation failed.
+        pptx.chart.chart.Chart
+            The created and styled PowerPoint chart object.
+
+        Raises:
+        -------
+        ValueError, TypeError, AttributeError, IndexError
+            Propagates exceptions occurring during chart creation or styling
+            due to invalid configuration, data issues, or mismatches between
+            style options and chart capabilities.
         """
-        try:
-            # 1. Create the chart shape and load data
-            self._create_chart_object()
-            if not self.chart:  # Check if chart creation failed inside the method
-                logger.error("Chart object creation failed. Aborting styling.")
-                return None
+        # 1. Create the chart shape and load data
+        # This step raises errors if basic creation fails (bad type, data, pos/dims)
+        self._create_chart_object()
 
-            # 2. Apply style settings - order can matter (e.g., axes/legend affect plot area)
-            logger.debug("Applying chart styling...")
-            self._apply_chart_title()
-            self._apply_legend_settings()  # Legend size/position affects plot area
-            self._apply_axis_settings()  # Axis visibility/labels affect plot area & contains plot border setting
-            self._apply_series_settings()  # Apply colors/styles to series data points/bars/lines
-            self._apply_data_labels()  # Apply labels after series exist and are colored
-            self._apply_bar_column_settings()  # Apply gap/overlap specific to bar/column types
+        # Ensure chart object exists before proceeding (should always unless _create failed)
+        if not self.chart:
+            # This condition should ideally not be reached if _create_chart_object raises on failure
+            raise RuntimeError("Chart object was not created successfully.")
 
-            logger.info("Chart styling applied successfully.")
-            return self.chart
+        # 2. Apply style settings - order can matter
+        # These methods raise errors if config is invalid or attributes don't exist when expected
+        self._apply_chart_title()
+        self._apply_legend_settings()  # Legend affects plot area
+        self._apply_category_axis_settings()  # Axes affect plot area
+        self._apply_value_axis_settings()
+        self._apply_plot_area_settings()  # Plot area border/fill
+        self._apply_series_settings()  # Colors/styles for data points/bars/lines
+        self._apply_data_labels()  # Apply labels after series exist
+        self._apply_bar_column_settings()  # Gap/overlap specific to bar/column types
 
-        except Exception as e:
-            # Catch errors during styling phase as well
-            logger.error(f"Error during chart styling: {e}", exc_info=True)
-            # Optionally remove partially created chart shape? Requires storing chart_shape ref.
-            # shapes = self.slide.shapes
-            # if self.chart and self.chart.part in [sp.part for sp in shapes]: ... remove logic ...
-            return None  # Indicate failure
+        return self.chart
 
 
 # --- Main Public Function ---
@@ -700,7 +765,7 @@ class PowerPointChartFormatter:
 
 def add_chart(
     slide: Slide, dataframe: pd.DataFrame, style_config: Optional[Dict[str, Any]] = None
-) -> Optional[Chart]:
+) -> Chart:
     """
     High-level function to add a pandas DataFrame as a styled chart to a PowerPoint slide.
 
@@ -710,123 +775,124 @@ def add_chart(
         The PowerPoint slide object.
     dataframe : pd.DataFrame
         The data to display. Assumes first column is categories, rest are series.
+        NaN values will be passed as None, potentially creating gaps in charts.
+        Impute data (e.g., with 0) beforehand if gaps are not desired.
     style_config : dict, optional
         A dictionary with custom style settings. These will be merged with
         the default style settings.
 
     Returns:
     --------
-    Optional[pptx.chart.chart.Chart]
-        The created and styled PowerPoint chart object, or None on failure.
+    pptx.chart.chart.Chart
+        The created and styled PowerPoint chart object.
+
+    Raises:
+    -------
+    ValueError, TypeError, AttributeError, IndexError
+        Propagates exceptions from chart creation or styling, typically due to
+        invalid configuration (e.g., unknown chart type, bad color format),
+        data problems, or attempting to apply styles incompatible with the
+        chosen chart type.
     """
-    try:
-        # 1. Create the final style dictionary by merging custom with defaults
-        final_style = create_chart_style(custom_style=style_config)
+    # 1. Create the final style dictionary. Raises TypeError if style_config is not dict.
+    final_style = create_chart_style(custom_style=style_config)
 
-        # 2. Instantiate the formatter
-        formatter = PowerPointChartFormatter(slide, dataframe, final_style)
+    # 2. Instantiate the formatter. Raises TypeError/ValueError for bad inputs.
+    formatter = PowerPointChartFormatter(slide, dataframe, final_style)
 
-        # 3. Run the creation and styling process
-        chart = formatter.add_to_slide()
+    # 3. Run the creation and styling process. Raises various errors on failure.
+    chart = formatter.add_to_slide()
 
-        return chart
-
-    except (ValueError, TypeError) as init_err:
-        # Catch known initialization errors from PowerPointChartFormatter
-        logger.error(f"Invalid input for chart creation: {init_err}", exc_info=True)
-        return None
-    except Exception as e:
-        # Catch unexpected errors during the overall process
-        logger.error(
-            f"An unexpected error occurred in add_chart function: {e}", exc_info=True
-        )
-        return None
+    return chart
 
 
 # --- Example Usage (Optional - keep commented out or use for testing) ---
 # if __name__ == "__main__":
 #     from pptx import Presentation
 #     print(f"Using pandas version: {pd.__version__}")
-#     # Add sample data and presentation creation code here from original example...
-#     # ... (Create df, prs, slide, custom_style)
 
-#     # --- Define a custom style ---
+#     # --- Define a custom style (using the simplified structure + extras) ---
 #     custom_style = {
-#         "chart_type": "stacked_bar",  # Horizontal stacked bar
-#         #"position": {"left": 0.5, "top": 1.0}, # Position uses defaults if not specified
-#         "dimensions": {"width": 9.0, "height": 5.5}, # Override dimensions
+#         "chart_type": "stacked_bar",
+#         "dimensions": {"width": 9.0, "height": 5.5},
 #         "title": {"text": "Sample Stacked Bar Chart", "font": {"size": 18, "color": "FF0000"}}, # Red title
-#         "legend": {"position": "top", "include_in_layout": True},
+#         "legend": {"position": "top"}, # Override legend position
 #         "data_labels": {
-#             "enabled": True,
-#             "font": {"size": 8, "bold": True, "color": (255, 255, 255)}, # White font
-#             "position": "center",
-#             "number_format": "0",  # Show integers
+#             "enabled": True, # Keep labels enabled
+#             "font": {"size": 8, "bold": True, "color": "FFFFFF"}, # White, smaller, bold
+#             "position": "inside_base", # Change position
+#             "number_format": "0", # Add number format back
 #         },
 #         "category_axis": {
 #             "tick_labels": {"font": {"size": 9}},
-#             "line": {"visible": False} # Hide category axis line
+#             "line": {"visible": False} # Add axis line visibility setting
 #             },
 #         "value_axis": {
 #             "visible": True,
-#             "major_gridlines": False,
-#             "max_scale": 60,  # Set max value axis limit
-#             "number_format": "#,##0",  # Format axis labels with comma
-#             "line": {"visible": False} # Hide value axis line
+#             "major_gridlines": False, # Turn off gridlines
+#             "max_scale": 60,         # Add max scale
+#             "number_format": "#,##0", # Add number format
+#             "line": {"visible": False}
 #         },
-#         "plot_area": {"border": {"visible": False}}, # Explicitly hide plot area border
-#         "colors": {  # Custom colors by series name (DataFrame column name)
-#             "Series 1": "4F81BD",  # Blue
-#             "Series 2": "C0504D",  # Red
-#             "Series 3": "9BBB59",  # Green
+#         "plot_area": {"border": {"visible": True, "color": "0000FF"}}, # Add blue plot area border
+#         "colors": { # Custom colors by series name (DataFrame column name)
+#             "Series 1": "4F81BD", # Blue
+#             "Series 2": "C0504D", # Red
+#             "Series 3": "9BBB59", # Green
 #         },
-#         "gap_width": 100, # Narrower gap between bars
+#         "gap_width": 100, # Narrower gap
 #     }
 
-#     # Create a sample DataFrame
+#     # Create a sample DataFrame with NaN
 #     data = {
-#        "Category": ["Alpha", "Bravo", "Charlie", "Delta"],
-#        "Series 1": [10, 20, 15, 25],
-#        "Series 2": [5, 15, 10, 20],
-#        "Series 3": [8, 12, 18, 6],
+#         "Category": ["Alpha", "Bravo", "Charlie", "Delta", "Echo"],
+#         "Series 1": [10, 20, 15, 25, 18],
+#         "Series 2": [5, 15, None, 20, 10], # Contains None/NaN
+#         "Series 3": [8, 12, 18, 6, None], # Contains None/NaN
 #     }
 #     df = pd.DataFrame(data)
+#     # If you wanted zeros instead of gaps/None:
+#     # df_filled = df.fillna(0)
 
 #     # Create a presentation
 #     prs = Presentation()
-#     slide_layout = prs.slide_layouts[5]  # Choose a blank layout
+#     slide_layout = prs.slide_layouts[5] # Choose a blank layout
 #     slide = prs.slides.add_slide(slide_layout)
 
-
 #     # --- Add the chart using the refactored function ---
-#     print("\nAdding chart 1 (Styled Stacked Bar)...")
-#     chart_object = add_chart(slide, df, style_config=custom_style)
-
-#     if chart_object:
+#     print("\nAdding chart 1 (Styled Stacked Bar with NaN)...")
+#     try:
+#         # Use df, which contains None values
+#         chart_object = add_chart(slide, df, style_config=custom_style)
 #         print(f"Chart 1 added successfully. Type: {chart_object.chart_type.name}")
-#     else:
-#         print("Failed to add chart 1.")
+#     except Exception as e:
+#         print(f"Failed to add chart 1: {type(e).__name__}: {e}")
+#         # import traceback
+#         # traceback.print_exc() # Uncomment for full traceback
 
-#     # --- Add a second chart (column) with fewer custom styles ---
+#     # --- Add a second chart (line) with fewer custom styles and NaN ---
 #     slide2 = prs.slides.add_slide(slide_layout)
 #     style2 = {
-#         "chart_type": "stacked_column",  # Vertical
-#         "title": {"text": "Stacked Column (Fewer Customizations)"},
-#         "data_labels": {"enabled": False},  # Turn off labels
-#         "legend": {"enabled": False},  # Turn off legend
-#         "value_axis": {"major_gridlines": True}, # Ensure gridlines are on
+#         "chart_type": "line_markers", # Line chart
+#         "title": {"text": "Line Chart with Gaps (NaN as None)"},
+#         "data_labels": {"enabled": False},
+#         "legend": {"enabled": True, "position": "right"},
+#         "value_axis": {"major_gridlines": True},
 #         # Colors will use DEFAULT_COLORS
 #     }
-#     print("\nAdding chart 2 (Stacked Column)...")
-#     chart_object2 = add_chart(slide2, df, style_config=style2)
-#     if chart_object2:
+#     print("\nAdding chart 2 (Line with Markers and NaN)...")
+#     try:
+#         # Use df, which contains None values - should create gaps in the line
+#         chart_object2 = add_chart(slide2, df, style_config=style2)
 #         print(f"Chart 2 added successfully. Type: {chart_object2.chart_type.name}")
-#     else:
-#         print("Failed to add chart 2.")
+#     except Exception as e:
+#         print(f"Failed to add chart 2: {type(e).__name__}: {e}")
+#         # import traceback
+#         # traceback.print_exc()
 
 #     # Save the presentation
 #     try:
-#         output_filename = "refactored_chart_test.pptx"
+#         output_filename = "refactored_chart_test_v2.pptx"
 #         prs.save(output_filename)
 #         print(f"\nPresentation saved as {output_filename}")
 #     except PermissionError:
